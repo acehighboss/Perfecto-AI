@@ -1,10 +1,16 @@
 import streamlit as st
+import os
+import tempfile
 from langchain_core.messages import ChatMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
-from langchain_community.document_loaders import WebBaseLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import (
+    WebBaseLoader,
+    PyPDFLoader,
+    Docx2txtLoader,
+)
+from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -15,91 +21,109 @@ from dotenv import load_dotenv
 # API KEY 정보로드
 load_dotenv()
 
-st.set_page_config(page_title="RAG-enhanced Gemini Chatbot", page_icon="🔗")
-st.title("🔗 RAG 기능이 추가된 Gemini 챗봇")
+st.set_page_config(page_title="File/URL RAG Chatbot", page_icon="🤖")
+st.title("🤖 파일/URL 분석 RAG 챗봇")
 st.markdown(
     """
-안녕하세요! 이 챗봇은 일반적인 대화뿐만 아니라, 웹사이트 내용을 분석하고 해당 내용을 기반으로 질문에 답변하는 RAG 기능도 갖추고 있습니다.
-
-**사용 방법:**
-1.  왼쪽 사이드바에서 분석하고 싶은 웹사이트의 전체 URL을 입력하세요.
-2.  '사이트 분석 시작' 버튼을 클릭하세요. (분석에는 잠시 시간이 걸릴 수 있습니다.)
-3.  분석이 완료되면, 해당 웹사이트 내용에 대해 질문해보세요!
+안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX)의 내용을 분석하고 답변합니다.
+왼쪽 사이드바에서 AI의 페르소나와 분석할 대상을 설정해주세요.
 """
 )
 
+# --- 문서 로딩 및 처리 관련 함수 ---
 
-# --- RAG 파이프라인 관련 함수 ---
-@st.cache_resource(show_spinner="웹사이트를 분석 중입니다...")
-def get_retriever_from_url(url):
-    """
-    URL로부터 문서를 로드하고, 텍스트를 분할하여 벡터 저장소 기반의 retriever를 생성합니다.
-    Streamlit의 cache_resource 데코레이터를 사용하여 한 번 생성된 retriever는 세션 내에서 재사용됩니다.
-    """
-    # 1. 문서 로드
-    loader = WebBaseLoader(url)
-    documents = loader.load()
 
-    # 2. 텍스트 분할
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+def get_documents_from_files(uploaded_files):
+    """
+    업로드된 파일 리스트에서 문서를 로드합니다.
+    """
+    all_documents = []
+    for uploaded_file in uploaded_files:
+        # 임시 파일로 저장하여 경로를 얻음
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=os.path.splitext(uploaded_file.name)[1]
+        ) as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            tmp_file_path = tmp_file.name
+
+        loader = None
+        if uploaded_file.name.endswith(".pdf"):
+            loader = PyPDFLoader(tmp_file_path)
+        elif uploaded_file.name.endswith(".docx"):
+            loader = Docx2txtLoader(tmp_file_path)
+        # 추가적인 파일 형식 로더를 여기에 추가할 수 있습니다.
+
+        if loader:
+            all_documents.extend(loader.load())
+
+        # 임시 파일 삭제
+        os.remove(tmp_file_path)
+
+    return all_documents
+
+
+# --- [수정된 부분 1] get_retriever_from_source 함수 ---
+# threshold 인자를 추가로 받도록 수정합니다.
+@st.cache_resource(show_spinner="분석 중입니다...")
+def get_retriever_from_source(source_type, source_input, threshold):
+    """
+    URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여 retriever를 생성합니다.
+    """
+    documents = []
+    if source_type == "URL":
+        loader = WebBaseLoader(source_input)
+        documents = loader.load()
+    elif source_type == "Files":
+        documents = get_documents_from_files(source_input)
+
+    if not documents:
+        return None
+
+    # 임베딩 모델 정의
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+
+    # SemanticChunker를 사용하여 의미 기반으로 텍스트 분할
+    text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="percentile")
     splits = text_splitter.split_documents(documents)
 
-    # 3. 임베딩 및 벡터 저장소 생성
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    # FAISS 벡터 저장소 생성 및 retriever 반환
     vectorstore = FAISS.from_documents(splits, embeddings)
 
-    # 4. Retriever 생성
-    # # 가장 유사한 문서 3개를 가져오도록 k값 설정
-    # return vectorstore.as_retriever(search_kwargs={"k": 3})
-    # 유사도 점수 0.5 이상인 문서만 가져오도록 설정
+    # [핵심 수정] retriever 설정 변경
+    # search_type을 'similarity_score_threshold'로 설정하고,
+    # search_kwargs에 score_threshold를 추가합니다.
+    # k와 threshold를 동시에 만족하는 결과를 가져옵니다.
     return vectorstore.as_retriever(
-        search_type="similarity_score_threshold", search_kwargs={"score_threshold": 0.5}
+        search_type="similarity_score_threshold",
+        search_kwargs={"k": 3, "score_threshold": threshold},
     )
 
 
 # --- LangChain 체인 생성 함수 ---
-def get_conversational_rag_chain(retriever):
-    """
-    RAG 기능을 수행하는 체인을 생성합니다.
-    """
-    # RAG 프롬프트 정의
-    rag_prompt = ChatPromptTemplate.from_template(
-        """
-        Answer the user's question based on the context provided below.
-        If you don't know the answer, just say that you don't know. Don't make up an answer.
+def get_conversational_rag_chain(retriever, system_prompt):
+    template = f"""{system_prompt}
 
-        Context:
-        {context}
+Answer the user's question based on the context provided below.
+If you don't know the answer, just say that you don't know. Don't make up an answer.
 
-        Question:
-        {input}
-        """
-    )
+Context:
+{{context}}
 
+Question:
+{{input}}
+"""
+    rag_prompt = ChatPromptTemplate.from_template(template)
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-
-    # 문서들을 하나의 문자열로 결합하는 체인
     document_chain = create_stuff_documents_chain(llm, rag_prompt)
-
-    # 검색된 문서를 document_chain으로 전달하는 체인
-    retrieval_chain = create_retrieval_chain(retriever, document_chain)
-
-    return retrieval_chain
+    return create_retrieval_chain(retriever, document_chain)
 
 
-def get_default_chain():
-    """
-    기본적인 대화형 체인을 생성합니다.
-    """
+def get_default_chain(system_prompt):
     prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", "당신은 친절한 AI 어시스턴트입니다."),
-            ("user", "{question}"),
-        ]
+        [("system", system_prompt), ("user", "{question}")]
     )
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-    output_parser = StrOutputParser()
-    return prompt | llm | output_parser
+    return prompt | llm | StrOutputParser()
 
 
 # --- 세션 상태 초기화 ---
@@ -107,64 +131,128 @@ if "messages" not in st.session_state:
     st.session_state["messages"] = []
 if "retriever" not in st.session_state:
     st.session_state.retriever = None
+if "system_prompt" not in st.session_state:
+    st.session_state.system_prompt = "당신은 친절한 AI 어시스턴트입니다. 사용자의 질문에 항상 친절하고 상세하게 답변해주세요."
+
 
 # --- 사이드바 UI ---
 with st.sidebar:
-    st.header("RAG 설정")
-    url_input = st.text_input(
-        "분석할 웹사이트 URL을 입력하세요", placeholder="https://example.com"
+    st.header("⚙️ 설정")
+    st.divider()
+
+    st.subheader("🤖 AI 페르소나 설정")
+    system_prompt_input = st.text_area(
+        "AI의 역할을 설정해주세요.", value=st.session_state.system_prompt, height=150
+    )
+    st.session_state.system_prompt = system_prompt_input
+
+    st.divider()
+    st.subheader("🔎 분석 대상 설정")
+
+    # URL 입력
+    url_input = st.text_input("웹사이트 URL", placeholder="https://example.com")
+
+    # 파일 업로더
+    uploaded_files = st.file_uploader(
+        "파일 업로드 (PDF, DOCX)", type=["pdf", "docx"], accept_multiple_files=True
+    )
+    st.info("이미지 파일 분석은 현재 지원되지 않습니다.", icon="ℹ️")
+
+    # --- [수정된 부분 2] 유사도 임계값 슬라이더 추가 ---
+    st.subheader("📊 검색 정확도 설정")
+    similarity_threshold = st.slider(
+        "유사도 임계값 (값이 낮을수록 정확함)",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.7,  # 기본값
+        step=0.05,
+        help="문서 검색 시, 설정된 값보다 낮은 거리(distance)의 문서만 가져옵니다. 0에 가까울수록 질문과 유사한 내용만 필터링합니다.",
     )
 
-    if st.button("사이트 분석 시작"):
-        if url_input:
-            st.session_state.retriever = get_retriever_from_url(url_input)
-            st.success("사이트 분석이 완료되었습니다! 이제 질문해보세요.")
+    if st.button("분석 시작"):
+        source_type = None
+        source_input = None
+        if uploaded_files:
+            source_type = "Files"
+            source_input = uploaded_files
+            # --- [수정된 부분 3] get_retriever_from_source 호출 시 threshold 전달 ---
+            st.session_state.retriever = get_retriever_from_source(
+                source_type, source_input, similarity_threshold
+            )
+        elif url_input:
+            source_type = "URL"
+            source_input = url_input
+            # --- [수정된 부분 3] get_retriever_from_source 호출 시 threshold 전달 ---
+            st.session_state.retriever = get_retriever_from_source(
+                source_type, source_input, similarity_threshold
+            )
         else:
-            st.warning("URL을 입력해주세요.")
+            st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
+
+        if st.session_state.retriever:
+            st.success("분석이 완료되었습니다! 이제 질문해보세요.")
 
     st.divider()
     if st.button("대화 초기화"):
-        st.session_state.messages = []
-        st.session_state.retriever = None
+        st.session_state.clear()
         st.rerun()
 
 # --- 메인 채팅 화면 ---
 # 이전 대화 기록 출력
-for chat_message in st.session_state["messages"]:
-    st.chat_message(chat_message.role).write(chat_message.content)
+for message in st.session_state["messages"]:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if "sources" in message and message["sources"]:
+            with st.expander("참고한 출처 보기"):
+                for i, source in enumerate(message["sources"]):
+                    st.info(f"**출처 {i+1}**\n\n{source.page_content}")
+                    st.divider()
+
 
 # 사용자의 입력
 user_input = st.chat_input("궁금한 내용을 물어보세요!")
 
 if user_input:
+    st.session_state.messages.append({"role": "user", "content": user_input})
     st.chat_message("user").write(user_input)
 
-    # RAG 기능이 활성화되었는지 확인
     if st.session_state.retriever:
-        chain = get_conversational_rag_chain(st.session_state.retriever)
-        # RAG 체인의 입력 형식은 {"input": user_question} 입니다.
-        response = chain.stream({"input": user_input})
+        chain = get_conversational_rag_chain(
+            st.session_state.retriever, st.session_state.system_prompt
+        )
 
         with st.chat_message("assistant"):
             container = st.empty()
             ai_answer = ""
-            # RAG 체인의 응답 구조가 다르므로, 'answer' 키를 확인합니다.
-            for chunk in response:
+            source_documents = []
+
+            for chunk in chain.stream({"input": user_input}):
                 if "answer" in chunk:
                     ai_answer += chunk["answer"]
                     container.markdown(ai_answer)
+                if "context" in chunk and not source_documents:
+                    source_documents = chunk["context"]
+
+            st.session_state.messages.append(
+                {"role": "assistant", "content": ai_answer, "sources": source_documents}
+            )
+
+            if source_documents:
+                with st.expander("참고한 출처 보기"):
+                    for i, source in enumerate(source_documents):
+                        st.info(f"**출처 {i+1}**\n\n{source.page_content}")
+                        st.divider()
+
     else:
-        # RAG 기능이 비활성화된 경우, 기본 체인 사용
-        chain = get_default_chain()
-        response = chain.stream({"question": user_input})
+        chain = get_default_chain(st.session_state.system_prompt)
 
         with st.chat_message("assistant"):
             container = st.empty()
             ai_answer = ""
-            for token in response:
+            for token in chain.stream({"question": user_input}):
                 ai_answer += token
                 container.markdown(ai_answer)
 
-    # 대화기록 저장
-    st.session_state.messages.append(ChatMessage(role="user", content=user_input))
-    st.session_state.messages.append(ChatMessage(role="assistant", content=ai_answer))
+        st.session_state.messages.append(
+            {"role": "assistant", "content": ai_answer, "sources": []}
+        )
