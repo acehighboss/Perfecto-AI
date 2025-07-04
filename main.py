@@ -11,7 +11,6 @@ from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 
-# [수정 1: LlamaParse import 추가]
 from llama_parse import LlamaParse
 
 # API KEY를 환경변수로 관리하기 위한 설정 파일
@@ -24,7 +23,7 @@ st.set_page_config(page_title="Multimodal RAG Chatbot", page_icon="🤖")
 st.title("🤖 멀티모달 파일/URL 분석 RAG 챗봇")
 st.markdown(
     """
-안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX)의 내용을 분석하고 답변합니다.
+안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일의 내용을 분석하고 답변합니다.
 **LlamaParse**를 사용하여 **테이블과 텍스트를 함께 인식**하고 질문에 답할 수 있습니다.
 """
 )
@@ -38,15 +37,12 @@ def get_documents_from_files_with_llamaparse(uploaded_files):
     """
     all_documents = []
 
-    parsing_instruction = "You are parsing a brief of AI Report. Please extract tables in markdown format."
-
     # LlamaParse 파서 설정. 결과물을 마크다운으로 받습니다.
     parser = LlamaParse(
         api_key=os.getenv("LLAMA_CLOUD_API_KEY"),
         result_type="markdown",
         language="ko",
         verbose=True,  # 진행 상황을 로그로 표시
-        parsing_instruction=parsing_instruction,
     )
 
     for uploaded_file in uploaded_files:
