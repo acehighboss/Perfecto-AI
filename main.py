@@ -5,15 +5,14 @@ from langchain_core.messages import ChatMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
-from langchain_community.document_loaders import (
-    WebBaseLoader,
-    PyPDFLoader,
-    Docx2txtLoader,
-)
+from langchain_community.document_loaders import WebBaseLoader
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
+
+# [수정 1: LlamaParse import 추가]
+from llama_parse import LlamaParse
 
 # API KEY를 환경변수로 관리하기 위한 설정 파일
 from dotenv import load_dotenv
@@ -21,48 +20,64 @@ from dotenv import load_dotenv
 # API KEY 정보로드
 load_dotenv()
 
-st.set_page_config(page_title="File/URL RAG Chatbot", page_icon="🤖")
-st.title("🤖 파일/URL 분석 RAG 챗봇")
+st.set_page_config(page_title="Multimodal RAG Chatbot", page_icon="🤖")
+st.title("🤖 멀티모달 파일/URL 분석 RAG 챗봇")
 st.markdown(
     """
 안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX)의 내용을 분석하고 답변합니다.
-왼쪽 사이드바에서 AI의 페르소나와 분석할 대상을 설정해주세요.
+**LlamaParse**를 사용하여 **테이블과 텍스트를 함께 인식**하고 질문에 답할 수 있습니다.
 """
 )
 
-# --- 문서 로딩 및 처리 관련 함수 ---
 
-
-def get_documents_from_files(uploaded_files):
+# [수정 2: LlamaParse를 사용하도록 문서 로딩 함수 변경]
+def get_documents_from_files_with_llamaparse(uploaded_files):
     """
-    업로드된 파일 리스트에서 문서를 로드합니다.
+    업로드된 파일 리스트에서 LlamaParse를 사용하여 문서를 로드합니다.
+    테이블과 텍스트를 마크다운 형식으로 변환합니다.
     """
     all_documents = []
+
+    parsing_instruction = "You are parsing a brief of AI Report. Please extract tables in markdown format."
+
+    # LlamaParse 파서 설정. 결과물을 마크다운으로 받습니다.
+    parser = LlamaParse(
+        api_key=os.getenv("LLAMA_CLOUD_API_KEY"),
+        result_type="markdown",
+        language="ko",
+        verbose=True,  # 진행 상황을 로그로 표시
+        parsing_instruction=parsing_instruction,
+    )
+
     for uploaded_file in uploaded_files:
-        # 임시 파일로 저장하여 경로를 얻음
         with tempfile.NamedTemporaryFile(
-            delete=False, suffix=os.path.splitext(uploaded_file.name)[1]
+            delete=False, suffix=".pdf" if "pdf" in uploaded_file.type else ".docx"
         ) as tmp_file:
             tmp_file.write(uploaded_file.getvalue())
             tmp_file_path = tmp_file.name
 
-        loader = None
-        if uploaded_file.name.endswith(".pdf"):
-            loader = PyPDFLoader(tmp_file_path)
-        elif uploaded_file.name.endswith(".docx"):
-            loader = Docx2txtLoader(tmp_file_path)
-        # 추가적인 파일 형식 로더를 여기에 추가할 수 있습니다.
+            # LlamaParse를 사용하여 파일 파싱
+            # LlamaParse는 LangChain Document가 아닌 자체 Document를 반환하므로,
+            # LangChain Document로 변환해주는 .load_and_parse()를 사용합니다.
+            # 하지만 llama-parse 최신 버전은 바로 load_data를 사용해 LangChain과 호환되는 문서를 얻을 수 있습니다.
+            # load_data는 파일 경로 리스트를 받으므로 단일 파일도 리스트로 전달합니다.
+            try:
+                # llama_parse는 비동기 함수를 기반으로 하므로, 이벤트 루프 관리가 필요할 수 있습니다.
+                # Streamlit 환경에서는 아래와 같이 간단히 처리할 수 있습니다.
+                import asyncio
 
-        if loader:
-            all_documents.extend(loader.load())
-
-        # 임시 파일 삭제
-        os.remove(tmp_file_path)
+                documents = asyncio.run(parser.aload_data(tmp_file_path))
+                all_documents.extend(documents)
+            except Exception as e:
+                st.error(f"LlamaParse 처리 중 오류 발생: {e}")
+            finally:
+                # 임시 파일 삭제
+                os.remove(tmp_file_path)
 
     return all_documents
 
 
-@st.cache_resource(show_spinner="분석 중입니다...")
+@st.cache_resource(show_spinner="LlamaParse로 문서를 분석 중입니다...")
 def get_retriever_from_source(source_type, source_input, threshold):
     """
     URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여 retriever를 생성합니다.
@@ -72,19 +87,16 @@ def get_retriever_from_source(source_type, source_input, threshold):
         loader = WebBaseLoader(source_input)
         documents = loader.load()
     elif source_type == "Files":
-        documents = get_documents_from_files(source_input)
+        # [수정 3: 새로운 LlamaParse 함수 호출]
+        documents = get_documents_from_files_with_llamaparse(source_input)
 
     if not documents:
+        st.warning("문서에서 내용을 추출하지 못했습니다.")
         return None
 
-    # 임베딩 모델 정의
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-
-    # SemanticChunker를 사용하여 의미 기반으로 텍스트 분할
     text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="percentile")
     splits = text_splitter.split_documents(documents)
-
-    # FAISS 벡터 저장소 생성 및 retriever 반환
     vectorstore = FAISS.from_documents(splits, embeddings)
 
     return vectorstore.as_retriever(
@@ -93,24 +105,16 @@ def get_retriever_from_source(source_type, source_input, threshold):
     )
 
 
-# --- LangChain 체인 생성 함수 ---
-
-
-# get_conversational_rag_chain: 대화 기록을 처리하도록 프롬프트 수정
 def get_conversational_rag_chain(retriever, system_prompt):
-    """
-    RAG 체인을 생성합니다. 대화 기록(chat_history)을 컨텍스트에 포함합니다.
-    """
-    # 시스템 프롬프트에 대화 기록을 활용하라는 내용을 추가할 수 있습니다.
     template = f"""{system_prompt}
 
 Answer the user's question based on the context provided below and the conversation history.
+The context may include text and tables in markdown format. You must be able to understand and answer based on them.
 If you don't know the answer, just say that you don't know. Don't make up an answer.
 
 Context:
 {{context}}
 """
-    # MessagesPlaceholder를 사용하여 대화 기록을 프롬프트에 삽입합니다.
     rag_prompt = ChatPromptTemplate.from_messages(
         [
             ("system", template),
@@ -123,12 +127,7 @@ Context:
     return create_retrieval_chain(retriever, document_chain)
 
 
-# get_default_chain: 대화 기록을 처리하도록 프롬프트 수정
 def get_default_chain(system_prompt):
-    """
-    기본 대화 체인을 생성합니다. 대화 기록(chat_history)을 컨텍스트에 포함합니다.
-    """
-    # MessagesPlaceholder를 사용하여 대화 기록을 프롬프트에 삽입합니다.
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
@@ -146,7 +145,7 @@ if "messages" not in st.session_state:
 if "retriever" not in st.session_state:
     st.session_state.retriever = None
 if "system_prompt" not in st.session_state:
-    st.session_state.system_prompt = "당신은 친절한 AI 어시스턴트입니다. 사용자의 질문에 항상 친절하고 상세하게 답변해주세요."
+    st.session_state.system_prompt = "당신은 문서 분석 전문가 AI 어시스턴트입니다. 주어진 문서의 텍스트와 테이블을 정확히 이해하고 상세하게 답변해주세요."
 
 
 # --- 사이드바 UI ---
@@ -167,7 +166,10 @@ with st.sidebar:
     uploaded_files = st.file_uploader(
         "파일 업로드 (PDF, DOCX)", type=["pdf", "docx"], accept_multiple_files=True
     )
-    st.info("이미지 파일 분석은 현재 지원되지 않습니다.", icon="ℹ️")
+    st.info(
+        "LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.",
+        icon="ℹ️",
+    )
 
     st.subheader("📊 검색 정확도 설정")
     similarity_threshold = st.slider(
@@ -210,10 +212,10 @@ for message in st.session_state["messages"]:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         if "sources" in message and message["sources"]:
-            with st.expander("참고한 출처 보기"):
+            with st.expander("참고한 출처 보기 (마크다운 형식)"):
                 for i, source in enumerate(message["sources"]):
-                    st.info(f"**출처 {i+1}**\n\n{source.page_content}")
-                    st.divider()
+                    st.text(f"--- 출처 {i+1} ---")
+                    st.markdown(source.page_content)
 
 
 user_input = st.chat_input("궁금한 내용을 물어보세요!")
@@ -222,8 +224,6 @@ if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.chat_message("user").write(user_input)
 
-    # 체인에 전달할 대화 기록 생성
-    # 현재 입력을 제외한 이전 대화 기록을 LangChain이 이해하는 형식으로 변환합니다.
     chat_history = [
         ChatMessage(role=msg["role"], content=msg["content"])
         for msg in st.session_state.messages[:-1]
@@ -239,7 +239,6 @@ if user_input:
             ai_answer = ""
             source_documents = []
 
-            # RAG 체인 호출 시 chat_history 전달
             for chunk in chain.stream(
                 {"input": user_input, "chat_history": chat_history}
             ):
@@ -254,10 +253,10 @@ if user_input:
             )
 
             if source_documents:
-                with st.expander("참고한 출처 보기"):
+                with st.expander("참고한 출처 보기 (마크다운 형식)"):
                     for i, source in enumerate(source_documents):
-                        st.info(f"**출처 {i+1}**\n\n{source.page_content}")
-                        st.divider()
+                        st.text(f"--- 출처 {i+1} ---")
+                        st.markdown(source.page_content)  # 마크다운으로 출력
 
     else:
         chain = get_default_chain(st.session_state.system_prompt)
@@ -265,7 +264,6 @@ if user_input:
         with st.chat_message("assistant"):
             container = st.empty()
             ai_answer = ""
-            # 기본 체인 호출 시 chat_history 전달
             for token in chain.stream(
                 {"question": user_input, "chat_history": chat_history}
             ):
