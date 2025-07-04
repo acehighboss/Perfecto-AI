@@ -2,7 +2,7 @@ import streamlit as st
 import os
 import tempfile
 from langchain_core.messages import ChatMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import (
@@ -62,8 +62,6 @@ def get_documents_from_files(uploaded_files):
     return all_documents
 
 
-# --- [수정된 부분 1] get_retriever_from_source 함수 ---
-# threshold 인자를 추가로 받도록 수정합니다.
 @st.cache_resource(show_spinner="분석 중입니다...")
 def get_retriever_from_source(source_type, source_input, threshold):
     """
@@ -89,10 +87,6 @@ def get_retriever_from_source(source_type, source_input, threshold):
     # FAISS 벡터 저장소 생성 및 retriever 반환
     vectorstore = FAISS.from_documents(splits, embeddings)
 
-    # [핵심 수정] retriever 설정 변경
-    # search_type을 'similarity_score_threshold'로 설정하고,
-    # search_kwargs에 score_threshold를 추가합니다.
-    # k와 threshold를 동시에 만족하는 결과를 가져옵니다.
     return vectorstore.as_retriever(
         search_type="similarity_score_threshold",
         search_kwargs={"k": 3, "score_threshold": threshold},
@@ -100,27 +94,47 @@ def get_retriever_from_source(source_type, source_input, threshold):
 
 
 # --- LangChain 체인 생성 함수 ---
+
+
+# get_conversational_rag_chain: 대화 기록을 처리하도록 프롬프트 수정
 def get_conversational_rag_chain(retriever, system_prompt):
+    """
+    RAG 체인을 생성합니다. 대화 기록(chat_history)을 컨텍스트에 포함합니다.
+    """
+    # 시스템 프롬프트에 대화 기록을 활용하라는 내용을 추가할 수 있습니다.
     template = f"""{system_prompt}
 
-Answer the user's question based on the context provided below.
+Answer the user's question based on the context provided below and the conversation history.
 If you don't know the answer, just say that you don't know. Don't make up an answer.
 
 Context:
 {{context}}
-
-Question:
-{{input}}
 """
-    rag_prompt = ChatPromptTemplate.from_template(template)
+    # MessagesPlaceholder를 사용하여 대화 기록을 프롬프트에 삽입합니다.
+    rag_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", template),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("user", "{input}"),
+        ]
+    )
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
     document_chain = create_stuff_documents_chain(llm, rag_prompt)
     return create_retrieval_chain(retriever, document_chain)
 
 
+# get_default_chain: 대화 기록을 처리하도록 프롬프트 수정
 def get_default_chain(system_prompt):
+    """
+    기본 대화 체인을 생성합니다. 대화 기록(chat_history)을 컨텍스트에 포함합니다.
+    """
+    # MessagesPlaceholder를 사용하여 대화 기록을 프롬프트에 삽입합니다.
     prompt = ChatPromptTemplate.from_messages(
-        [("system", system_prompt), ("user", "{question}")]
+        [
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("user", "{question}"),
+        ]
     )
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
     return prompt | llm | StrOutputParser()
@@ -149,22 +163,18 @@ with st.sidebar:
     st.divider()
     st.subheader("🔎 분석 대상 설정")
 
-    # URL 입력
     url_input = st.text_input("웹사이트 URL", placeholder="https://example.com")
-
-    # 파일 업로더
     uploaded_files = st.file_uploader(
         "파일 업로드 (PDF, DOCX)", type=["pdf", "docx"], accept_multiple_files=True
     )
     st.info("이미지 파일 분석은 현재 지원되지 않습니다.", icon="ℹ️")
 
-    # --- [수정된 부분 2] 유사도 임계값 슬라이더 추가 ---
     st.subheader("📊 검색 정확도 설정")
     similarity_threshold = st.slider(
         "유사도 임계값 (값이 낮을수록 정확함)",
         min_value=0.0,
         max_value=1.0,
-        value=0.7,  # 기본값
+        value=0.7,
         step=0.05,
         help="문서 검색 시, 설정된 값보다 낮은 거리(distance)의 문서만 가져옵니다. 0에 가까울수록 질문과 유사한 내용만 필터링합니다.",
     )
@@ -175,14 +185,12 @@ with st.sidebar:
         if uploaded_files:
             source_type = "Files"
             source_input = uploaded_files
-            # --- [수정된 부분 3] get_retriever_from_source 호출 시 threshold 전달 ---
             st.session_state.retriever = get_retriever_from_source(
                 source_type, source_input, similarity_threshold
             )
         elif url_input:
             source_type = "URL"
             source_input = url_input
-            # --- [수정된 부분 3] get_retriever_from_source 호출 시 threshold 전달 ---
             st.session_state.retriever = get_retriever_from_source(
                 source_type, source_input, similarity_threshold
             )
@@ -198,7 +206,6 @@ with st.sidebar:
         st.rerun()
 
 # --- 메인 채팅 화면 ---
-# 이전 대화 기록 출력
 for message in st.session_state["messages"]:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -209,12 +216,18 @@ for message in st.session_state["messages"]:
                     st.divider()
 
 
-# 사용자의 입력
 user_input = st.chat_input("궁금한 내용을 물어보세요!")
 
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.chat_message("user").write(user_input)
+
+    # 체인에 전달할 대화 기록 생성
+    # 현재 입력을 제외한 이전 대화 기록을 LangChain이 이해하는 형식으로 변환합니다.
+    chat_history = [
+        ChatMessage(role=msg["role"], content=msg["content"])
+        for msg in st.session_state.messages[:-1]
+    ]
 
     if st.session_state.retriever:
         chain = get_conversational_rag_chain(
@@ -226,7 +239,10 @@ if user_input:
             ai_answer = ""
             source_documents = []
 
-            for chunk in chain.stream({"input": user_input}):
+            # RAG 체인 호출 시 chat_history 전달
+            for chunk in chain.stream(
+                {"input": user_input, "chat_history": chat_history}
+            ):
                 if "answer" in chunk:
                     ai_answer += chunk["answer"]
                     container.markdown(ai_answer)
@@ -249,7 +265,10 @@ if user_input:
         with st.chat_message("assistant"):
             container = st.empty()
             ai_answer = ""
-            for token in chain.stream({"question": user_input}):
+            # 기본 체인 호출 시 chat_history 전달
+            for token in chain.stream(
+                {"question": user_input, "chat_history": chat_history}
+            ):
                 ai_answer += token
                 container.markdown(ai_answer)
 
