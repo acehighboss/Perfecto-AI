@@ -26,6 +26,7 @@ st.markdown(
 """
 )
 
+
 def get_documents_from_files_with_llamaparse(uploaded_files):
     async def parse_files(files):
         parser = LlamaParse(
@@ -35,10 +36,12 @@ def get_documents_from_files_with_llamaparse(uploaded_files):
         )
         parsed_data = []
         for file in files:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.name)[1]) as tmp_file:
+            with tempfile.NamedTemporaryFile(
+                delete=False, suffix=os.path.splitext(file.name)[1]
+            ) as tmp_file:
                 tmp_file.write(file.getvalue())
                 tmp_file_path = tmp_file.name
-            
+
             try:
                 documents = await parser.aload_data(tmp_file_path)
                 parsed_data.extend(documents)
@@ -53,22 +56,26 @@ def get_documents_from_files_with_llamaparse(uploaded_files):
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    
+
     return loop.run_until_complete(parse_files(uploaded_files))
 
 
 @st.cache_resource(show_spinner="LlamaParse로 문서를 분석 중입니다...")
-def get_retriever_from_source(source_type, source_input): # [수정 1] threshold 파라미터 제거
+def get_retriever_from_source(
+    source_type, source_input
+):  # [수정 1] threshold 파라미터 제거
     """
     URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여 retriever를 생성합니다.
     """
     documents = []
-    
+
     if source_type == "URL":
         loader = WebBaseLoader(source_input)
         documents = loader.load()
     elif source_type == "Files":
         llama_index_documents = get_documents_from_files_with_llamaparse(source_input)
+
+        st.write(f"LlamaParse를 통해 파싱된 문서의 개수: {len(llama_index_documents)}")
 
         if llama_index_documents:
             langchain_documents = [
@@ -84,7 +91,7 @@ def get_retriever_from_source(source_type, source_input): # [수정 1] threshold
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="percentile")
     splits = text_splitter.split_documents(documents)
-    
+
     vectorstore = FAISS.from_documents(splits, embeddings)
 
     # [수정 2] 검색 방식을 'similarity'로 변경하고, 상위 5개 문서를 가져오도록 설정
@@ -152,8 +159,11 @@ with st.sidebar:
     uploaded_files = st.file_uploader(
         "파일 업로드 (PDF, DOCX)", type=["pdf", "docx"], accept_multiple_files=True
     )
-    st.info("LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.", icon="ℹ️")
-    
+    st.info(
+        "LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.",
+        icon="ℹ️",
+    )
+
     # [수정 3] 유사도 임계값 슬라이더 UI 제거
     # st.subheader("📊 검색 정확도 설정")
     # similarity_threshold = st.slider(...)
@@ -204,8 +214,11 @@ if user_input:
 
     try:
         chat_history = [
-            HumanMessage(content=msg["content"]) if msg["role"] == "user" 
-            else AIMessage(content=msg["content"])
+            (
+                HumanMessage(content=msg["content"])
+                if msg["role"] == "user"
+                else AIMessage(content=msg["content"])
+            )
             for msg in st.session_state.messages[:-1]
         ]
 
@@ -227,9 +240,13 @@ if user_input:
                         container.markdown(ai_answer)
                     if "context" in chunk and not source_documents:
                         source_documents = chunk["context"]
-                
+
                 st.session_state.messages.append(
-                    {"role": "assistant", "content": ai_answer, "sources": source_documents}
+                    {
+                        "role": "assistant",
+                        "content": ai_answer,
+                        "sources": source_documents,
+                    }
                 )
 
                 if source_documents:
@@ -249,11 +266,13 @@ if user_input:
                 ):
                     ai_answer += token
                     container.markdown(ai_answer)
-                
+
                 st.session_state.messages.append(
                     {"role": "assistant", "content": ai_answer, "sources": []}
                 )
 
     except Exception as e:
-        st.chat_message("assistant").error(f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다.\n\n오류: {e}")
+        st.chat_message("assistant").error(
+            f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다.\n\n오류: {e}"
+        )
         st.session_state.messages.pop()
