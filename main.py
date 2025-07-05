@@ -8,7 +8,8 @@ from langchain_core.documents import Document as LangChainDocument
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import WebBaseLoader
-from langchain_experimental.text_splitter import SemanticChunker
+# [수정 1] RecursiveCharacterTextSplitter import
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -26,7 +27,6 @@ st.markdown(
 """
 )
 
-
 def get_documents_from_files_with_llamaparse(uploaded_files):
     async def parse_files(files):
         parser = LlamaParse(
@@ -36,12 +36,10 @@ def get_documents_from_files_with_llamaparse(uploaded_files):
         )
         parsed_data = []
         for file in files:
-            with tempfile.NamedTemporaryFile(
-                delete=False, suffix=os.path.splitext(file.name)[1]
-            ) as tmp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.name)[1]) as tmp_file:
                 tmp_file.write(file.getvalue())
                 tmp_file_path = tmp_file.name
-
+            
             try:
                 documents = await parser.aload_data(tmp_file_path)
                 parsed_data.extend(documents)
@@ -56,27 +54,19 @@ def get_documents_from_files_with_llamaparse(uploaded_files):
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
+    
     return loop.run_until_complete(parse_files(uploaded_files))
 
 
-# @st.cache_resource(show_spinner="LlamaParse로 문서를 분석 중입니다...")
-def get_retriever_from_source(
-    source_type, source_input
-):  # [수정 1] threshold 파라미터 제거
-    """
-    URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여 retriever를 생성합니다.
-    """
-    documents = []
-
+def get_retriever_from_source(source_type, source_input):
+    documents = [] 
+    
     if source_type == "URL":
         loader = WebBaseLoader(source_input)
         documents = loader.load()
     elif source_type == "Files":
         llama_index_documents = get_documents_from_files_with_llamaparse(source_input)
-
-        st.write(f"LlamaParse를 통해 파싱된 문서의 개수: {len(llama_index_documents)}")
-
+        
         if llama_index_documents:
             langchain_documents = [
                 LangChainDocument(page_content=doc.text, metadata=doc.metadata)
@@ -88,13 +78,17 @@ def get_retriever_from_source(
         st.warning("문서에서 내용을 추출하지 못했습니다.")
         return None
 
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="percentile")
+    # [수정 2] SemanticChunker를 안정적인 RecursiveCharacterTextSplitter로 교체
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=100,
+        length_function=len,
+        is_separator_regex=False,
+    )
     splits = text_splitter.split_documents(documents)
+    
+    vectorstore = FAISS.from_documents(splits, GoogleGenerativeAIEmbeddings(model="models/embedding-001"))
 
-    vectorstore = FAISS.from_documents(splits, embeddings)
-
-    # [수정 2] 검색 방식을 'similarity'로 변경하고, 상위 5개 문서를 가져오도록 설정
     return vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
 
 
@@ -159,22 +153,18 @@ with st.sidebar:
     uploaded_files = st.file_uploader(
         "파일 업로드 (PDF, DOCX)", type=["pdf", "docx"], accept_multiple_files=True
     )
-    st.info(
-        "LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.",
-        icon="ℹ️",
-    )
-
-    # [수정 3] 유사도 임계값 슬라이더 UI 제거
-    # st.subheader("📊 검색 정확도 설정")
-    # similarity_threshold = st.slider(...)
-
+    st.info("LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.", icon="ℹ️")
+    
     if st.button("분석 시작"):
+        # 분석 시작 시, 이전 대화 기록과 리트리버를 초기화
+        st.session_state.messages = []
+        st.session_state.retriever = None
+        
         source_type = None
         source_input = None
         if uploaded_files:
             source_type = "Files"
             source_input = uploaded_files
-            # [수정 4] get_retriever_from_source 호출 시 threshold 인자 제거
             st.session_state.retriever = get_retriever_from_source(
                 source_type, source_input
             )
@@ -214,11 +204,8 @@ if user_input:
 
     try:
         chat_history = [
-            (
-                HumanMessage(content=msg["content"])
-                if msg["role"] == "user"
-                else AIMessage(content=msg["content"])
-            )
+            HumanMessage(content=msg["content"]) if msg["role"] == "user" 
+            else AIMessage(content=msg["content"])
             for msg in st.session_state.messages[:-1]
         ]
 
@@ -240,13 +227,9 @@ if user_input:
                         container.markdown(ai_answer)
                     if "context" in chunk and not source_documents:
                         source_documents = chunk["context"]
-
+                
                 st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": ai_answer,
-                        "sources": source_documents,
-                    }
+                    {"role": "assistant", "content": ai_answer, "sources": source_documents}
                 )
 
                 if source_documents:
@@ -266,13 +249,11 @@ if user_input:
                 ):
                     ai_answer += token
                     container.markdown(ai_answer)
-
+                
                 st.session_state.messages.append(
                     {"role": "assistant", "content": ai_answer, "sources": []}
                 )
 
     except Exception as e:
-        st.chat_message("assistant").error(
-            f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다.\n\n오류: {e}"
-        )
+        st.chat_message("assistant").error(f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다.\n\n오류: {e}")
         st.session_state.messages.pop()
