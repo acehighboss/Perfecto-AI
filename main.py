@@ -1,9 +1,10 @@
 import streamlit as st
 import os
 import tempfile
-import asyncio # 비동기 처리를 위해 추가
+import asyncio  # 비동기 처리를 위해 추가
 from langchain_core.messages import ChatMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
 # [수정 1: LangChain Document 클래스 import]
 from langchain_core.documents import Document as LangChainDocument
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -27,6 +28,7 @@ st.markdown(
 """
 )
 
+
 def get_documents_from_files_with_llamaparse(uploaded_files):
     """
     업로드된 파일 리스트에서 LlamaParse를 사용하여 LlamaIndex 문서를 로드합니다.
@@ -42,10 +44,12 @@ def get_documents_from_files_with_llamaparse(uploaded_files):
     async def parse_files(files):
         parsed_data = []
         for file in files:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.name)[1]) as tmp_file:
+            with tempfile.NamedTemporaryFile(
+                delete=False, suffix=os.path.splitext(file.name)[1]
+            ) as tmp_file:
                 tmp_file.write(file.getvalue())
                 tmp_file_path = tmp_file.name
-            
+
             try:
                 # aload_data는 비동기 함수이므로 await 사용
                 documents = await parser.aload_data(tmp_file_path)
@@ -62,7 +66,7 @@ def get_documents_from_files_with_llamaparse(uploaded_files):
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    
+
     all_documents = loop.run_until_complete(parse_files(uploaded_files))
     return all_documents
 
@@ -72,8 +76,8 @@ def get_retriever_from_source(source_type, source_input, threshold):
     """
     URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여 retriever를 생성합니다.
     """
-    documents = [] # LangChain 문서를 담을 최종 리스트
-    
+    documents = []  # LangChain 문서를 담을 최종 리스트
+
     if source_type == "URL":
         loader = WebBaseLoader(source_input)
         documents = loader.load()
@@ -98,7 +102,7 @@ def get_retriever_from_source(source_type, source_input, threshold):
     # 이제 SemanticChunker는 page_content 속성을 가진 LangChain 문서를 받게 됩니다.
     text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="percentile")
     splits = text_splitter.split_documents(documents)
-    
+
     vectorstore = FAISS.from_documents(splits, embeddings)
 
     return vectorstore.as_retriever(
@@ -168,7 +172,10 @@ with st.sidebar:
     uploaded_files = st.file_uploader(
         "파일 업로드 (PDF, DOCX)", type=["pdf", "docx"], accept_multiple_files=True
     )
-    st.info("LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.", icon="ℹ️")
+    st.info(
+        "LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.",
+        icon="ℹ️",
+    )
 
     st.subheader("📊 검색 정확도 설정")
     similarity_threshold = st.slider(
@@ -207,6 +214,7 @@ with st.sidebar:
         st.rerun()
 
 # --- 메인 채팅 화면 ---
+# --- 메인 채팅 화면 ---
 for message in st.session_state["messages"]:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -223,52 +231,67 @@ if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.chat_message("user").write(user_input)
 
-    chat_history = [
-        ChatMessage(role=msg["role"], content=msg["content"])
-        for msg in st.session_state.messages[:-1]
-    ]
+    # [수정] try...except 블록으로 전체 로직을 감싸 오류를 처리합니다.
+    try:
+        chat_history = [
+            ChatMessage(role=msg["role"], content=msg["content"])
+            for msg in st.session_state.messages[:-1]
+        ]
 
-    if st.session_state.retriever:
-        chain = get_conversational_rag_chain(
-            st.session_state.retriever, st.session_state.system_prompt
-        )
-
-        with st.chat_message("assistant"):
-            container = st.empty()
-            ai_answer = ""
-            source_documents = []
-
-            for chunk in chain.stream(
-                {"input": user_input, "chat_history": chat_history}
-            ):
-                if "answer" in chunk:
-                    ai_answer += chunk["answer"]
-                    container.markdown(ai_answer)
-                if "context" in chunk and not source_documents:
-                    source_documents = chunk["context"]
-
-            st.session_state.messages.append(
-                {"role": "assistant", "content": ai_answer, "sources": source_documents}
+        if st.session_state.retriever:
+            chain = get_conversational_rag_chain(
+                st.session_state.retriever, st.session_state.system_prompt
             )
 
-            if source_documents:
-                with st.expander("참고한 출처 보기 (마크다운 형식)"):
-                    for i, source in enumerate(source_documents):
-                        st.text(f"--- 출처 {i+1} ---")
-                        st.markdown(source.page_content)
+            with st.chat_message("assistant"):
+                container = st.empty()
+                ai_answer = ""
+                source_documents = []
 
-    else:
-        chain = get_default_chain(st.session_state.system_prompt)
+                for chunk in chain.stream(
+                    {"input": user_input, "chat_history": chat_history}
+                ):
+                    if "answer" in chunk:
+                        ai_answer += chunk["answer"]
+                        container.markdown(ai_answer)
+                    if "context" in chunk and not source_documents:
+                        source_documents = chunk["context"]
 
-        with st.chat_message("assistant"):
-            container = st.empty()
-            ai_answer = ""
-            for token in chain.stream(
-                {"question": user_input, "chat_history": chat_history}
-            ):
-                ai_answer += token
-                container.markdown(ai_answer)
+                # 정상적으로 답변이 생성되었을 때만 대화 기록에 추가
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": ai_answer,
+                        "sources": source_documents,
+                    }
+                )
 
-        st.session_state.messages.append(
-            {"role": "assistant", "content": ai_answer, "sources": []}
+                if source_documents:
+                    with st.expander("참고한 출처 보기 (마크다운 형식)"):
+                        for i, source in enumerate(source_documents):
+                            st.text(f"--- 출처 {i+1} ---")
+                            st.markdown(source.page_content)  # 마크다운으로 출력
+
+        else:  # st.session_state.retriever가 없을 때
+            chain = get_default_chain(st.session_state.system_prompt)
+
+            with st.chat_message("assistant"):
+                container = st.empty()
+                ai_answer = ""
+                for token in chain.stream(
+                    {"question": user_input, "chat_history": chat_history}
+                ):
+                    ai_answer += token
+                    container.markdown(ai_answer)
+
+                # 정상적으로 답변이 생성되었을 때만 대화 기록에 추가
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": ai_answer, "sources": []}
+                )
+
+    except Exception as e:
+        # 오류 발생 시 사용자에게 알리고, 깨진 대화 기록을 방지하기 위해 마지막 user 메시지를 제거합니다.
+        st.chat_message("assistant").error(
+            f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다.\n\n오류: {e}"
         )
+        st.session_state.messages.pop()
