@@ -3,7 +3,6 @@ import os
 import tempfile
 import asyncio
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-# [수정 1: 필요한 메시지 타입 import 변경]
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.documents import Document as LangChainDocument
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -28,10 +27,6 @@ st.markdown(
 )
 
 def get_documents_from_files_with_llamaparse(uploaded_files):
-    """
-    업로드된 파일 리스트에서 LlamaParse를 사용하여 LlamaIndex 문서를 로드합니다.
-    """
-    # LlamaParse는 비동기 함수를 사용하므로 이벤트 루프를 통해 실행합니다.
     async def parse_files(files):
         parser = LlamaParse(
             api_key=os.getenv("LLAMA_CLOUD_API_KEY"),
@@ -53,7 +48,6 @@ def get_documents_from_files_with_llamaparse(uploaded_files):
                 os.remove(tmp_file_path)
         return parsed_data
 
-    # Streamlit 환경에서 asyncio 실행
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -64,7 +58,7 @@ def get_documents_from_files_with_llamaparse(uploaded_files):
 
 
 @st.cache_resource(show_spinner="LlamaParse로 문서를 분석 중입니다...")
-def get_retriever_from_source(source_type, source_input, threshold):
+def get_retriever_from_source(source_type, source_input): # [수정 1] threshold 파라미터 제거
     """
     URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여 retriever를 생성합니다.
     """
@@ -93,10 +87,8 @@ def get_retriever_from_source(source_type, source_input, threshold):
     
     vectorstore = FAISS.from_documents(splits, embeddings)
 
-    return vectorstore.as_retriever(
-        search_type="similarity_score_threshold",
-        search_kwargs={"k": 5, "score_threshold": threshold},
-    )
+    # [수정 2] 검색 방식을 'similarity'로 변경하고, 상위 5개 문서를 가져오도록 설정
+    return vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
 
 
 def get_conversational_rag_chain(retriever, system_prompt):
@@ -161,16 +153,10 @@ with st.sidebar:
         "파일 업로드 (PDF, DOCX)", type=["pdf", "docx"], accept_multiple_files=True
     )
     st.info("LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.", icon="ℹ️")
-
-    st.subheader("📊 검색 정확도 설정")
-    similarity_threshold = st.slider(
-        "유사도 임계값 (값이 낮을수록 정확함)",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.7,
-        step=0.05,
-        help="문서 검색 시, 설정된 값보다 낮은 거리(distance)의 문서만 가져옵니다. 0에 가까울수록 질문과 유사한 내용만 필터링합니다.",
-    )
+    
+    # [수정 3] 유사도 임계값 슬라이더 UI 제거
+    # st.subheader("📊 검색 정확도 설정")
+    # similarity_threshold = st.slider(...)
 
     if st.button("분석 시작"):
         source_type = None
@@ -178,14 +164,15 @@ with st.sidebar:
         if uploaded_files:
             source_type = "Files"
             source_input = uploaded_files
+            # [수정 4] get_retriever_from_source 호출 시 threshold 인자 제거
             st.session_state.retriever = get_retriever_from_source(
-                source_type, source_input, similarity_threshold
+                source_type, source_input
             )
         elif url_input:
             source_type = "URL"
             source_input = url_input
             st.session_state.retriever = get_retriever_from_source(
-                source_type, source_input, similarity_threshold
+                source_type, source_input
             )
         else:
             st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
@@ -216,7 +203,6 @@ if user_input:
     st.chat_message("user").write(user_input)
 
     try:
-        # [수정 2: 역할(role)에 따라 HumanMessage와 AIMessage를 생성]
         chat_history = [
             HumanMessage(content=msg["content"]) if msg["role"] == "user" 
             else AIMessage(content=msg["content"])
