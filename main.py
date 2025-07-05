@@ -89,7 +89,7 @@ def get_retriever_from_source(source_type, source_input):
     
     vectorstore = FAISS.from_documents(splits, GoogleGenerativeAIEmbeddings(model="models/embedding-001"))
 
-    return vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
+    return vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 10})
 
 
 def get_conversational_rag_chain(retriever, system_prompt):
