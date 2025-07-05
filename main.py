@@ -60,7 +60,7 @@ def get_documents_from_files_with_llamaparse(uploaded_files):
     return loop.run_until_complete(parse_files(uploaded_files))
 
 
-@st.cache_resource(show_spinner="LlamaParse로 문서를 분석 중입니다...")
+# @st.cache_resource(show_spinner="LlamaParse로 문서를 분석 중입니다...")
 def get_retriever_from_source(
     source_type, source_input
 ):  # [수정 1] threshold 파라미터 제거
