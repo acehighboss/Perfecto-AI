@@ -6,11 +6,11 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.documents import Document as LangChainDocument
 from langchain_google_genai import ChatGoogleGenerativeAI
-# [수정 1] Google 임베딩 대신 OpenAI 임베딩을 import
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import WebBaseLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+# [수정 1] SemanticChunker를 다시 import 합니다.
+from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -81,16 +81,14 @@ def get_retriever_from_source(source_type, source_input):
         st.warning("문서에서 내용을 추출하지 못했습니다.")
         return None
 
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=100,
-        length_function=len,
-        is_separator_regex=False,
-    )
+    # [수정 2] 임베딩 모델을 먼저 정의합니다.
+    embeddings = OpenAIEmbeddings()
+
+    # [수정 3] Text Splitter를 다시 SemanticChunker로 교체합니다.
+    # 이제 OpenAIEmbeddings와 함께 안정적으로 동작할 것입니다.
+    text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="percentile")
     splits = text_splitter.split_documents(documents)
     
-    # [수정 2] 임베딩 모델을 OpenAIEmbeddings로 교체
-    embeddings = OpenAIEmbeddings()
     vectorstore = FAISS.from_documents(splits, embeddings)
 
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
@@ -104,7 +102,7 @@ def get_retriever_from_source(source_type, source_input):
     
     return compression_retriever
 
-# --- (이후 코드는 이전과 동일) ---
+# --- (이후 코드는 변경 사항 없음) ---
 def get_conversational_rag_chain(retriever, system_prompt):
     template = f"""{system_prompt}
 
