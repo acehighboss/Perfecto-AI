@@ -1,25 +1,28 @@
 # RAG 파이프라인 모듈 (rag_pipeline.py)
 # Retriever, Chain 등 모든 LangChain 관련 객체를 생성하고 관리하는 역할을 합니다.
 
+import streamlit as st
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
-from langchain_community.document_loaders import WebBaseLoader
+from langchain_community.document_loaders import PlaywrightURLLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import LLMChainExtractor
-from file_handler import get_documents_from_files  # file_handler에서 함수 import
+from file_handler import get_documents_from_files
 
 def get_retriever_from_source(source_type, source_input):
     documents = [] 
     
     if source_type == "URL":
-        loader = WebBaseLoader(source_input)
-        documents = loader.load()
+        with st.spinner("브라우저를 실행하여 URL 컨텐츠를 로드 중입니다..."):
+            loader = PlaywrightURLLoader(urls=[source_input], remove_selectors=["header", "footer"])
+            documents = loader.load()
+
     elif source_type == "Files":
         documents = get_documents_from_files(source_input)
 
