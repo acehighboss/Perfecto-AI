@@ -2,12 +2,15 @@
 # Retriever, Chain 등 모든 LangChain 관련 객체를 생성하고 관리하는 역할을 합니다.
 
 import streamlit as st
+import asyncio
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import PlaywrightURLLoader
-from langchain_experimental.text_splitter import SemanticChunker
+
+# SemanticChunker 대신 RecursiveCharacterTextSplitter를 사용합니다.
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -24,7 +27,7 @@ def get_retriever_from_source(source_type, source_input):
             loader = PlaywrightURLLoader(
                 urls=[source_input], remove_selectors=["header", "footer"]
             )
-            documents = loader.load()
+            documents = asyncio.run(loader.aload())
 
     elif source_type == "Files":
         documents = get_documents_from_files(source_input)
@@ -34,7 +37,13 @@ def get_retriever_from_source(source_type, source_input):
 
     embeddings = OpenAIEmbeddings()
 
-    text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="percentile")
+    # 대용량 문서를 안정적으로 처리하기 위해 RecursiveCharacterTextSplitter를 사용합니다.
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=100,
+        length_function=len,
+        is_separator_regex=False,
+    )
     splits = text_splitter.split_documents(documents)
 
     vectorstore = FAISS.from_documents(splits, embeddings)
