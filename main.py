@@ -50,16 +50,14 @@ if "playwright_installed" not in st.session_state:
 # API 키 로드
 load_dotenv()
 
-@@ -49,7 +14,7 @@
 st.title("🤖 멀티모달 파일/URL 분석 RAG 챗봇")
 st.markdown(
     """
-안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX)의 내용을 분석하고 답변합니다.
 안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX, TXT)의 내용을 분석하고 답변합니다.
 **LlamaParse**를 사용하여 **테이블과 텍스트를 함께 인식**하고 질문에 답할 수 있습니다.
 """
 )
-@@ -75,17 +40,14 @@
+
     st.subheader("🔎 분석 대상 설정")
     url_input = st.text_input("웹사이트 URL", placeholder="https://example.com")
     uploaded_files = st.file_uploader(
@@ -77,11 +75,10 @@ st.markdown(
         st.session_state.messages = []
         st.session_state.retriever = None
 
-        
         source_type = None
         source_input = None
+        
         if uploaded_files:
-@@ -98,9 +60,7 @@
             st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
 
         if source_input:
@@ -89,10 +86,10 @@ st.markdown(
                 source_type, source_input
             )
             st.session_state.retriever = get_retriever_from_source(source_type, source_input)
+            
             if st.session_state.retriever:
                 st.success("분석이 완료되었습니다! 이제 질문해보세요.")
 
-@@ -114,10 +74,10 @@
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         if "sources" in message and message["sources"]:
@@ -105,8 +102,6 @@ st.markdown(
                     st.divider()
 
 user_input = st.chat_input("궁금한 내용을 물어보세요!")
-
-@@ -127,64 +87,37 @@
 
     try:
         chat_history = [
