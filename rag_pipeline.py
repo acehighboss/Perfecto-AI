@@ -63,7 +63,7 @@ def get_retriever_from_source(source_type, source_input):
     return compression_retriever
 
 
-def get_conversational_rag_chain(retriever, system_prompt):
+def get_document_chain(system_prompt):
     template = f"""{system_prompt}
 
 Answer the user's question based on the context provided below and the conversation history.
@@ -82,7 +82,7 @@ Context:
     )
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
     document_chain = create_stuff_documents_chain(llm, rag_prompt)
-    return create_retrieval_chain(retriever, document_chain)
+    return document_chain
 
 
 def get_default_chain(system_prompt):
