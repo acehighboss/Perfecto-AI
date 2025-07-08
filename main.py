@@ -6,7 +6,7 @@ import subprocess
 import sys
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
-from rag_pipeline import get_retriever_from_source, get_document_chain, get_default_chain
+from rag_pipeline import get_retriever_from_source, get_conversational_rag_chain, get_default_chain
 
 # --- [수정] Playwright 브라우저 자동 설치 및 디버깅 로직 ---
 # 세션 상태를 사용하여 앱 세션당 한 번만 설치를 시도합니다.
@@ -143,25 +143,18 @@ if user_input:
 
         # [수정] RAG 체인 호출 로직 변경
         if st.session_state.retriever:
+            chain = get_conversational_rag_chain(st.session_state.retriever, st.session_state.system_prompt)
+            
             with st.chat_message("assistant"):
-                with st.spinner("관련 문서를 검색하고 답변을 생성 중입니다..."):
-                    # 1. Retriever를 직접 호출하여 출처 문서를 먼저 가져옵니다.
-                    retriever = st.session_state.retriever
-                    source_documents = retriever.get_relevant_documents(
-                        user_input,
-                    )
-                    
-                    # 2. 답변 생성 체인을 가져옵니다.
-                    document_chain = get_document_chain(st.session_state.system_prompt)
-                    
-                    # 3. 직접 가져온 출처와 사용자 질문으로 답변을 생성합니다.
-                    ai_answer = document_chain.invoke({
+                with st.spinner("답변을 생성하고 출처를 확인하는 중입니다..."):
+                    full_response = chain.invoke({
                         "input": user_input,
-                        "chat_history": chat_history,
-                        "context": source_documents
+                        "chat_history": chat_history
                     })
                     
-                    # 4. 결과 표시 및 저장
+                    ai_answer = full_response.get('answer', '답변을 가져오는 데 실패했습니다.')
+                    source_documents = full_response.get('context', [])
+                    
                     st.markdown(ai_answer)
 
                     st.session_state.messages.append(
@@ -178,7 +171,7 @@ if user_input:
                                 st.info(f"**출처 {i+1}**\n\n{source.page_content}")
                                 st.divider()
 
-        else: # RAG가 아닌 일반 대
+        else: # RAG가 아닌 일반 대화
             chain = get_default_chain(st.session_state.system_prompt)
             with st.chat_message("assistant"):
                 container = st.empty()
