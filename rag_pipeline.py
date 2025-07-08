@@ -4,12 +4,10 @@
 import streamlit as st
 import asyncio
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_openai import OpenAIEmbeddings
+from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import PlaywrightURLLoader
-
-# SemanticChunker 대신 RecursiveCharacterTextSplitter를 사용합니다.
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
@@ -22,40 +20,45 @@ from file_handler import get_documents_from_files
 def get_retriever_from_source(source_type, source_input):
     documents = []
 
-    if source_type == "URL":
-        with st.spinner("브라우저를 실행하여 URL 컨텐츠를 로드 중입니다..."):
+    with st.status("문서 처리 중...", expanded=True) as status:
+        if source_type == "URL":
+            status.update(label="URL 컨텐츠를 로드 중입니다...")
             loader = PlaywrightURLLoader(
                 urls=[source_input], remove_selectors=["header", "footer"]
             )
             documents = asyncio.run(loader.aload())
+        elif source_type == "Files":
+            status.update(label="파일을 파싱하고 있습니다...")
+            documents = get_documents_from_files(source_input)
 
-    elif source_type == "Files":
-        documents = get_documents_from_files(source_input)
+        if not documents:
+            status.update(label="문서 로딩 실패.", state="error")
+            return None
 
-    if not documents:
-        return None
+        status.update(label="문서를 청크(chunk)로 분할 중입니다...")
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, chunk_overlap=100
+        )
+        splits = text_splitter.split_documents(documents)
 
-    embeddings = OpenAIEmbeddings()
+        status.update(label=f"임베딩 모델을 로컬에 로드 중입니다...")
+        # [수정] 임베딩 모델의 이름을 올바른 오픈소스 모델 이름으로 변경합니다.
+        embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
 
-    # 대용량 문서를 안정적으로 처리하기 위해 RecursiveCharacterTextSplitter를 사용합니다.
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=100,
-        length_function=len,
-        is_separator_regex=False,
-    )
-    splits = text_splitter.split_documents(documents)
+        status.update(label=f"{len(splits)}개의 청크를 임베딩하고 있습니다...")
+        vectorstore = FAISS.from_documents(splits, embeddings)
 
-    vectorstore = FAISS.from_documents(splits, embeddings)
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+        status.update(label="Retriever를 생성 중입니다...")
+        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
 
-    base_retriever = vectorstore.as_retriever(
-        search_type="similarity", search_kwargs={"k": 10}
-    )
-    compressor = LLMChainExtractor.from_llm(llm)
-    compression_retriever = ContextualCompressionRetriever(
-        base_compressor=compressor, base_retriever=base_retriever
-    )
+        base_retriever = vectorstore.as_retriever(
+            search_type="similarity", search_kwargs={"k": 10}
+        )
+        compressor = LLMChainExtractor.from_llm(llm)
+        compression_retriever = ContextualCompressionRetriever(
+            base_compressor=compressor, base_retriever=base_retriever
+        )
+        status.update(label="문서 처리 완료!", state="complete")
 
     return compression_retriever
 
