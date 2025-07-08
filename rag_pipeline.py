@@ -10,53 +10,47 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import PlaywrightURLLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain.chains.retrieval import create_retrieval_chain
+# create_retrieval_chain은 이제 main.py에서 직접 처리하므로 여기서 필요 없습니다.
 from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import LLMChainExtractor
 from file_handler import get_documents_from_files
 
-
+# get_retriever_from_source 함수는 변경 없이 그대로 둡니다.
 def get_retriever_from_source(source_type, source_input):
-    documents = []
-
+    documents = [] 
     with st.status("문서 처리 중...", expanded=True) as status:
         if source_type == "URL":
             status.update(label="URL 컨텐츠를 로드 중입니다...")
-            loader = PlaywrightURLLoader(
-                urls=[source_input], remove_selectors=["header", "footer"]
-            )
+            loader = PlaywrightURLLoader(urls=[source_input], remove_selectors=["header", "footer"])
             documents = asyncio.run(loader.aload())
         elif source_type == "Files":
             status.update(label="파일을 파싱하고 있습니다...")
             documents = get_documents_from_files(source_input)
-
         if not documents:
             status.update(label="문서 로딩 실패.", state="error")
             return None
-
         status.update(label="문서를 청크(chunk)로 분할 중입니다...")
-        # [수정 1] 청크 크기를 더 작게 하여 검색 정확도를 높입니다.
         text_splitter = CharacterTextSplitter.from_tiktoken_encoder(
-            separator="\n",
-            keep_separator=True,
-            chunk_size=500,
-            chunk_overlap=50,
+            separator="\n", chunk_size=500, chunk_overlap=50,
         )
         splits = text_splitter.split_documents(documents)
-        
         status.update(label=f"임베딩 모델을 로컬에 로드 중입니다...")
         embeddings = SentenceTransformerEmbeddings(model_name='all-MiniLM-L6-v2')
-        
         status.update(label=f"{len(splits)}개의 청크를 임베딩하고 있습니다...")
         vectorstore = FAISS.from_documents(splits, embeddings)
-        
-        # [수정 2] 검색 개수를 20개로 늘려 필터에게 더 많은 후보를 제공합니다.
-        retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
+        status.update(label="Retriever를 생성 중입니다...")
+        llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash", temperature=0, request_timeout=120)
+        base_retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 20})
+        compressor = LLMChainExtractor.from_llm(llm)
+        compression_retriever = ContextualCompressionRetriever(
+            base_compressor=compressor, base_retriever=base_retriever
+        )
         status.update(label="문서 처리 완료!", state="complete")
-    
-    return retriever
+    return compression_retriever
 
-
-def get_conversational_rag_chain(retriever, system_prompt):
+# [수정] 함수의 역할을 '답변 생성 체인'만 만들도록 명확히 변경합니다.
+def get_document_chain(system_prompt):
     template = f"""{system_prompt}
 
 Answer the user's question based on the context provided below and the conversation history.
@@ -73,11 +67,9 @@ Context:
             ("user", "{input}"),
         ]
     )
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+    llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash", temperature=0)
     document_chain = create_stuff_documents_chain(llm, rag_prompt)
-    
-    return create_retrieval_chain(retriever, document_chain)
-
+    return document_chain
 
 def get_default_chain(system_prompt):
     prompt = ChatPromptTemplate.from_messages(
@@ -87,5 +79,5 @@ def get_default_chain(system_prompt):
             ("user", "{question}"),
         ]
     )
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+    llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash", temperature=0)
     return prompt | llm | StrOutputParser()
