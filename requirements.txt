@@ -1,11 +1,1 @@
-streamlit
-langchain
-langchain-core
-langchain-google-genai
-langchain-experimental
-python-dotenv
-faiss-cpu
-llama-parse
-tiktoken
-playwright
-sentence-transformers
+
