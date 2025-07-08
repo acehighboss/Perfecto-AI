@@ -8,7 +8,7 @@ from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import PlaywrightURLLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -37,7 +37,9 @@ def get_retriever_from_source(source_type, source_input):
 
         status.update(label="문서를 청크(chunk)로 분할 중입니다...")
         # [수정 1] 청크 크기를 더 작게 하여 검색 정확도를 높입니다.
-        text_splitter = RecursiveCharacterTextSplitter(
+        text_splitter = CharacterTextSplitter.from_tiktoken_encoder(
+            separator="\n",
+            keep_separator=True,
             chunk_size=500,
             chunk_overlap=50,
         )
