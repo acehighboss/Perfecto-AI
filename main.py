@@ -18,7 +18,7 @@ if "playwright_installed" not in st.session_state:
     with st.spinner("설치 명령을 실행 중입니다..."):
         # subprocess.run을 사용하여 'playwright install' 명령을 실행하고 결과를 캡처합니다.
         result = subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "--with-deps"],
+            [sys.executable, "-m", "playwright", "install"],
             capture_output=True,
             text=True,
             encoding='utf-8'  # 인코딩 명시
