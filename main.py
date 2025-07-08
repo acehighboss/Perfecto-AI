@@ -4,28 +4,42 @@
 import streamlit as st
 import subprocess
 import sys
-import asyncio
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
-from rag_pipeline import (
-    get_retriever_from_source,
-    get_conversational_rag_chain,
-    get_default_chain,
-)
+from rag_pipeline import get_retriever_from_source, get_conversational_rag_chain, get_default_chain
 
-# 윈도우 환경에서 Playwright 실행을 위한 asyncio 정책 설정
-# 이 코드는 항상 스크립트의 가장 위쪽에 위치해야 합니다.
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
-# --- [수정] Playwright 브라우저 자동 설치 로직 ---
-# st.session_state를 사용하여 앱 세션당 한 번만 실행되도록 설정
+# --- [수정] Playwright 브라우저 자동 설치 및 디버깅 로직 ---
+# 세션 상태를 사용하여 앱 세션당 한 번만 설치를 시도합니다.
 if "playwright_installed" not in st.session_state:
-    with st.spinner("Playwright 브라우저를 설치하고 있습니다. 잠시만 기다려주세요..."):
-        # subprocess.run을 사용하여 pip으로 설치된 playwright를 실행합니다.
-        # sys.executable은 현재 실행 중인 파이썬의 경로를 가리킵니다.
-        subprocess.run([sys.executable, "-m", "playwright", "install", "--with-deps"], capture_output=True, text=True)
-    st.session_state["playwright_installed"] = True
+    st.set_page_config(page_title="Initial Setup", layout="wide")
+    st.title("🛠️ 초기 설정: Playwright 브라우저 설치")
+    st.write("챗봇을 실행하기 전에 필요한 Playwright 브라우저를 설치합니다. 이 과정은 처음 한 번만 실행되며, 몇 분 정도 소요될 수 있습니다.")
+
+    with st.spinner("설치 명령을 실행 중입니다..."):
+        # subprocess.run을 사용하여 'playwright install' 명령을 실행하고 결과를 캡처합니다.
+        result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "--with-deps"],
+            capture_output=True,
+            text=True,
+            encoding='utf-8'  # 인코딩 명시
+        )
+    
+    # 설치 과정의 표준 출력(stdout)과 표준 에러(stderr)를 화면에 표시합니다.
+    st.subheader("설치 로그")
+    st.code(f"Return Code: {result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}")
+
+    if result.returncode == 0 and "successfully" in result.stdout.lower():
+        st.success("브라우저 설치가 성공적으로 완료되었습니다! 앱을 자동으로 다시 시작합니다.")
+        st.session_state["playwright_installed"] = True
+        # 성공 후 잠시 딜레이를 주어 메시지를 읽을 시간을 줍니다.
+        import time
+        time.sleep(3)
+        st.rerun() # 앱을 새로고침하여 원래의 챗봇 화면을 로드합니다.
+    else:
+        st.error("Playwright 브라우저 설치에 실패했습니다. 위의 로그를 확인하여 원인을 파악해주세요.")
+        st.stop() # 설치 실패 시 앱 실행을 중단합니다.
+
+# --- (이후 코드는 브라우저 설치가 성공해야만 실행됩니다) ---
 
 # API 키 로드
 load_dotenv()
