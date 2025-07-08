@@ -155,7 +155,7 @@ if user_input:
                     document_chain = get_document_chain(st.session_state.system_prompt)
                     
                     # 3. 직접 가져온 출처와 사용자 질문으로 답변을 생성합니다.
-                    ai_answer = answer_generation_chain.invoke({
+                    ai_answer = document_chain.invoke({
                         "input": user_input,
                         "chat_history": chat_history,
                         "context": source_documents
