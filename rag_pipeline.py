@@ -36,30 +36,31 @@ def get_retriever_from_source(source_type, source_input):
             return None
 
         status.update(label="문서를 청크(chunk)로 분할 중입니다...")
+        # [수정 1] 청크 크기를 더 작게 하여 검색 정확도를 높입니다.
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=100
+            chunk_size=500,
+            chunk_overlap=50,
         )
         splits = text_splitter.split_documents(documents)
-
+        
         status.update(label=f"임베딩 모델을 로컬에 로드 중입니다...")
-        # [수정] 임베딩 모델의 이름을 올바른 오픈소스 모델 이름으로 변경합니다.
-        embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
-
+        embeddings = SentenceTransformerEmbeddings(model_name='all-MiniLM-L6-v2')
+        
         status.update(label=f"{len(splits)}개의 청크를 임베딩하고 있습니다...")
         vectorstore = FAISS.from_documents(splits, embeddings)
-
+        
         status.update(label="Retriever를 생성 중입니다...")
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-
-        base_retriever = vectorstore.as_retriever(
-            search_type="similarity", search_kwargs={"k": 10}
-        )
+        llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash", temperature=0, request_timeout=120)
+        
+        # [수정 2] 검색 개수를 20개로 늘려 필터에게 더 많은 후보를 제공합니다.
+        base_retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 20})
         compressor = LLMChainExtractor.from_llm(llm)
         compression_retriever = ContextualCompressionRetriever(
-            base_compressor=compressor, base_retriever=base_retriever
+            base_compressor=compressor,
+            base_retriever=base_retriever
         )
         status.update(label="문서 처리 완료!", state="complete")
-
+    
     return compression_retriever
 
 
