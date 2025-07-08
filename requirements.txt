@@ -9,4 +9,5 @@ faiss-cpu
 llama-parse
 tiktoken
 playwright
+unstructured
 sentence-transformers
