@@ -141,23 +141,29 @@ if user_input:
             for msg in st.session_state.messages[:-1]
         ]
 
+        # [수정] RAG 체인 호출 로직 변경
         if st.session_state.retriever:
-            chain = get_conversational_rag_chain(
-                st.session_state.retriever, st.session_state.system_prompt
-            )
-            # [수정] chain.stream 대신 chain.invoke를 사용하여 답변과 출처를 한 번에 받습니다.
             with st.chat_message("assistant"):
-                with st.spinner("답변을 생성하고 출처를 확인하는 중입니다..."):
-                    # .invoke()는 전체 결과를 담은 dict를 반환합니다.
-                    full_response = chain.invoke(
-                        {"input": user_input, "chat_history": chat_history}
+                with st.spinner("관련 문서를 검색하고 답변을 생성 중입니다..."):
+                    # 1. Retriever를 직접 호출하여 출처 문서를 먼저 가져옵니다.
+                    retriever = st.session_state.retriever
+                    source_documents = retriever.get_relevant_documents(
+                        user_input,
                     )
-
-                    ai_answer = full_response.get(
-                        "answer", "답변을 가져오는 데 실패했습니다."
-                    )
-                    source_documents = full_response.get("context", [])
-
+                    
+                    # 2. 전체 체인이 아닌, 답변 생성 부분만 호출합니다.
+                    # 이를 위해 전체 체인을 만들고, 그 안의 combine_docs 체인만 사용합니다.
+                    full_chain = get_conversational_rag_chain(retriever, st.session_state.system_prompt)
+                    answer_generation_chain = full_chain.combine_docs
+                    
+                    # 3. 직접 가져온 출처와 사용자 질문으로 답변을 생성합니다.
+                    ai_answer = answer_generation_chain.invoke({
+                        "input": user_input,
+                        "chat_history": chat_history,
+                        "context": source_documents
+                    })
+                    
+                    # 4. 결과 표시 및 저장
                     st.markdown(ai_answer)
 
                     st.session_state.messages.append(
@@ -174,7 +180,7 @@ if user_input:
                                 st.info(f"**출처 {i+1}**\n\n{source.page_content}")
                                 st.divider()
 
-        else:
+        else: # RAG가 아닌 일반 대
             chain = get_default_chain(st.session_state.system_prompt)
             with st.chat_message("assistant"):
                 container = st.empty()
