@@ -2,6 +2,7 @@
 # Streamlit UI를 그리고, 사용자 입력을 받아 다른 모듈의 함수를 호출하여 챗봇의 전체 흐름을 제어합니다.
 
 import streamlit as st
+import subprocess
 import sys
 import asyncio
 from dotenv import load_dotenv
@@ -16,6 +17,15 @@ from rag_pipeline import (
 # 이 코드는 항상 스크립트의 가장 위쪽에 위치해야 합니다.
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+# --- [수정] Playwright 브라우저 자동 설치 로직 ---
+# st.session_state를 사용하여 앱 세션당 한 번만 실행되도록 설정
+if "playwright_installed" not in st.session_state:
+    with st.spinner("Playwright 브라우저를 설치하고 있습니다. 잠시만 기다려주세요..."):
+        # subprocess.run을 사용하여 pip으로 설치된 playwright를 실행합니다.
+        # sys.executable은 현재 실행 중인 파이썬의 경로를 가리킵니다.
+        subprocess.run([sys.executable, "-m", "playwright", "install", "--with-deps"], capture_output=True, text=True)
+    st.session_state["playwright_installed"] = True
 
 # API 키 로드
 load_dotenv()
