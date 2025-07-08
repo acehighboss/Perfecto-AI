@@ -6,7 +6,7 @@ import subprocess
 import sys
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
-from rag_pipeline import get_retriever_from_source, get_conversational_rag_chain, get_default_chain
+from rag_pipeline import get_retriever_from_source, get_document_chain, get_default_chain
 
 # --- [수정] Playwright 브라우저 자동 설치 및 디버깅 로직 ---
 # 세션 상태를 사용하여 앱 세션당 한 번만 설치를 시도합니다.
@@ -151,10 +151,8 @@ if user_input:
                         user_input,
                     )
                     
-                    # 2. 전체 체인이 아닌, 답변 생성 부분만 호출합니다.
-                    # 이를 위해 전체 체인을 만들고, 그 안의 combine_docs 체인만 사용합니다.
-                    full_chain = get_conversational_rag_chain(retriever, st.session_state.system_prompt)
-                    answer_generation_chain = full_chain.combine_docs
+                    # 2. 답변 생성 체인을 가져옵니다.
+                    document_chain = get_document_chain(st.session_state.system_prompt)
                     
                     # 3. 직접 가져온 출처와 사용자 질문으로 답변을 생성합니다.
                     ai_answer = answer_generation_chain.invoke({
