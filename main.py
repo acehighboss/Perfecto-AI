@@ -2,9 +2,20 @@
 # Streamlit UI를 그리고, 사용자 입력을 받아 다른 모듈의 함수를 호출하여 챗봇의 전체 흐름을 제어합니다.
 
 import streamlit as st
+import sys
+import asyncio
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
-from rag_pipeline import get_retriever_from_source, get_conversational_rag_chain, get_default_chain
+from rag_pipeline import (
+    get_retriever_from_source,
+    get_conversational_rag_chain,
+    get_default_chain,
+)
+
+# 윈도우 환경에서 Playwright 실행을 위한 asyncio 정책 설정
+# 이 코드는 항상 스크립트의 가장 위쪽에 위치해야 합니다.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 # API 키 로드
 load_dotenv()
@@ -42,12 +53,15 @@ with st.sidebar:
     uploaded_files = st.file_uploader(
         "파일 업로드 (PDF, DOCX)", type=["pdf", "docx"], accept_multiple_files=True
     )
-    st.info("LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.", icon="ℹ️")
-    
+    st.info(
+        "LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.",
+        icon="ℹ️",
+    )
+
     if st.button("분석 시작"):
         st.session_state.messages = []
         st.session_state.retriever = None
-        
+
         source_type = None
         source_input = None
         if uploaded_files:
@@ -60,7 +74,9 @@ with st.sidebar:
             st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
 
         if source_input:
-            st.session_state.retriever = get_retriever_from_source(source_type, source_input)
+            st.session_state.retriever = get_retriever_from_source(
+                source_type, source_input
+            )
             if st.session_state.retriever:
                 st.success("분석이 완료되었습니다! 이제 질문해보세요.")
 
@@ -87,43 +103,64 @@ if user_input:
 
     try:
         chat_history = [
-            HumanMessage(content=msg["content"]) if msg["role"] == "user" 
-            else AIMessage(content=msg["content"])
+            (
+                HumanMessage(content=msg["content"])
+                if msg["role"] == "user"
+                else AIMessage(content=msg["content"])
+            )
             for msg in st.session_state.messages[:-1]
         ]
-        
+
         if st.session_state.retriever:
-            chain = get_conversational_rag_chain(st.session_state.retriever, st.session_state.system_prompt)
+            chain = get_conversational_rag_chain(
+                st.session_state.retriever, st.session_state.system_prompt
+            )
+            # [수정] chain.stream 대신 chain.invoke를 사용하여 답변과 출처를 한 번에 받습니다.
             with st.chat_message("assistant"):
-                container = st.empty()
-                ai_answer = ""
-                source_documents = []
-                for chunk in chain.stream({"input": user_input, "chat_history": chat_history}):
-                    if "answer" in chunk:
-                        ai_answer += chunk["answer"]
-                        container.markdown(ai_answer)
-                    if "context" in chunk and not source_documents:
-                        source_documents = chunk["context"]
-                
-                st.session_state.messages.append({"role": "assistant", "content": ai_answer, "sources": source_documents})
-                # UI 업데이트는 한 번에 처리
-                container.markdown(ai_answer) 
-                if source_documents:
-                    with st.expander("참고한 출처 보기 (마크다운 형식)"):
-                        for i, source in enumerate(source_documents):
-                            st.text(f"--- 출처 {i+1} ---")
-                            st.markdown(source.page_content)
+                with st.spinner("답변을 생성하고 출처를 확인하는 중입니다..."):
+                    # .invoke()는 전체 결과를 담은 dict를 반환합니다.
+                    full_response = chain.invoke(
+                        {"input": user_input, "chat_history": chat_history}
+                    )
+
+                    ai_answer = full_response.get(
+                        "answer", "답변을 가져오는 데 실패했습니다."
+                    )
+                    source_documents = full_response.get("context", [])
+
+                    st.markdown(ai_answer)
+
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": ai_answer,
+                            "sources": source_documents,
+                        }
+                    )
+
+                    if source_documents:
+                        with st.expander("참고한 출처 보기"):
+                            for i, source in enumerate(source_documents):
+                                st.info(f"**출처 {i+1}**\n\n{source.page_content}")
+                                st.divider()
+
         else:
             chain = get_default_chain(st.session_state.system_prompt)
             with st.chat_message("assistant"):
                 container = st.empty()
                 ai_answer = ""
-                for token in chain.stream({"question": user_input, "chat_history": chat_history}):
+                for token in chain.stream(
+                    {"question": user_input, "chat_history": chat_history}
+                ):
                     ai_answer += token
                     container.markdown(ai_answer)
-                
-                st.session_state.messages.append({"role": "assistant", "content": ai_answer, "sources": []})
+
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": ai_answer, "sources": []}
+                )
 
     except Exception as e:
-        st.chat_message("assistant").error(f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다.\n\n오류: {e}")
+        st.chat_message("assistant").error(
+            f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다.\n\n오류: {e}"
+        )
         st.session_state.messages.pop()
