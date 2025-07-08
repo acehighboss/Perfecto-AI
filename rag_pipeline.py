@@ -12,8 +12,6 @@ from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import LLMChainExtractor
 from file_handler import get_documents_from_files
 
 
@@ -51,22 +49,14 @@ def get_retriever_from_source(source_type, source_input):
         status.update(label=f"{len(splits)}개의 청크를 임베딩하고 있습니다...")
         vectorstore = FAISS.from_documents(splits, embeddings)
         
-        status.update(label="Retriever를 생성 중입니다...")
-        llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash", temperature=0, request_timeout=120)
-        
         # [수정 2] 검색 개수를 20개로 늘려 필터에게 더 많은 후보를 제공합니다.
-        base_retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 20})
-        compressor = LLMChainExtractor.from_llm(llm)
-        compression_retriever = ContextualCompressionRetriever(
-            base_compressor=compressor,
-            base_retriever=base_retriever
-        )
+        retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
         status.update(label="문서 처리 완료!", state="complete")
     
-    return compression_retriever
+    return retriever
 
 
-def get_document_chain(system_prompt):
+def get_conversational_rag_chain(retriever, system_prompt):
     template = f"""{system_prompt}
 
 Answer the user's question based on the context provided below and the conversation history.
@@ -85,7 +75,8 @@ Context:
     )
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
     document_chain = create_stuff_documents_chain(llm, rag_prompt)
-    return document_chain
+    
+    return create_retrieval_chain(retriever, document_chain)
 
 
 def get_default_chain(system_prompt):
