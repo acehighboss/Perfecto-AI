@@ -28,7 +28,7 @@ if "playwright_installed" not in st.session_state:
     st.subheader("설치 로그")
     st.code(f"Return Code: {result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}")
 
-    if result.returncode == 0
+    if result.returncode == 0:
         st.success("브라우저 설치가 성공적으로 완료되었습니다! 앱을 자동으로 다시 시작합니다.")
         st.session_state["playwright_installed"] = True
         # 성공 후 잠시 딜레이를 주어 메시지를 읽을 시간을 줍니다.
