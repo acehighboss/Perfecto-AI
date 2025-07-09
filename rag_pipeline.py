@@ -32,8 +32,8 @@ def get_retriever_from_source(source_type, source_input):
         # [수정 2] 표와 같은 구조적 데이터가 깨지지 않도록, Markdown 구조에 최적화된
         # RecursiveCharacterTextSplitter를 사용합니다.
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=100,
+            chunk_size=300,
+            chunk_overlap=50,
             separators=["\n\n", "\n", " ", ""], # Markdown 구조를 우선적으로 고려
             is_separator_regex=False,
         )
