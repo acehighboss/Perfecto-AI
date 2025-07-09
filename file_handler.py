@@ -1,6 +1,4 @@
 # 파일 처리 모듈
-# LlamaParse를 사용하여 업로드된 파일을 분석하고, LangChain Document 객체로 변환하는 역할을 전담합니다.
-
 # file_handler.py (LlamaParse 제거 버전)
 
 import os
