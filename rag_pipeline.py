@@ -40,7 +40,7 @@ def get_retriever_from_source(source_type, source_input):
         status.update(label=f"{len(splits)}개의 청크를 임베딩하고 있습니다...")
         vectorstore = FAISS.from_documents(splits, embeddings)
         
-        retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
+        retriever = vectorstore.as_retriever(search_type="mmr", search_kwargs={'k': 3, , 'fetch_k': 20})
         status.update(label="문서 처리 완료!", state="complete")
     
     return retriever
