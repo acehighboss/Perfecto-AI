@@ -1,17 +1,14 @@
-# rag_pipeline.py
+# rag_pipeline.py (Selenium 버전)
 
 import streamlit as st
-import asyncio
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
-from langchain_community.document_loaders import PlaywrightURLLoader
+from langchain_community.document_loaders import SeleniumURLLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import LLMChainExtractor
 from file_handler import get_documents_from_files
 
 def get_retriever_from_source(source_type, source_input):
@@ -19,8 +16,10 @@ def get_retriever_from_source(source_type, source_input):
     with st.status("문서 처리 중...", expanded=True) as status:
         if source_type == "URL":
             status.update(label="URL 컨텐츠를 로드 중입니다...")
-            loader = PlaywrightURLLoader(urls=[source_input], remove_selectors=["header", "footer"])
-            documents = asyncio.run(loader.aload())
+            # SeleniumURLLoader는 동기적으로 작동하므로 asyncio가 필요 없습니다.
+            loader = SeleniumURLLoader(urls=[source_input])
+            documents = loader.load()
+
         elif source_type == "Files":
             status.update(label="파일을 파싱하고 있습니다...")
             documents = get_documents_from_files(source_input)
@@ -31,7 +30,7 @@ def get_retriever_from_source(source_type, source_input):
 
         status.update(label="문서를 청크(chunk)로 분할 중입니다...")
         text_splitter = CharacterTextSplitter.from_tiktoken_encoder(
-            separator="\n", chunk_size=500, chunk_overlap=50,
+            separator="\n", chunk_size=1000, chunk_overlap=100,
         )
         splits = text_splitter.split_documents(documents)
         
@@ -41,18 +40,10 @@ def get_retriever_from_source(source_type, source_input):
         status.update(label=f"{len(splits)}개의 청크를 임베딩하고 있습니다...")
         vectorstore = FAISS.from_documents(splits, embeddings)
         
-        status.update(label="Retriever를 생성 중입니다...")
-        llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash", temperature=0, request_timeout=120)
-        
-        base_retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 20})
-        compressor = LLMChainExtractor.from_llm(llm)
-        compression_retriever = ContextualCompressionRetriever(
-            base_compressor=compressor, base_retriever=base_retriever
-        )
+        retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
         status.update(label="문서 처리 완료!", state="complete")
     
-    return compression_retriever
-
+    return retriever
 # '답변 생성 체인'만 만들도록 역할을 명확히 합니다.
 def get_document_chain(system_prompt):
     template = f"""{system_prompt}
