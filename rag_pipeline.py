@@ -1,12 +1,14 @@
-# rag_pipeline.py (Selenium 버전)
+# rag_pipeline.py
 
 import streamlit as st
+import asyncio
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import SeleniumURLLoader
-from langchain.text_splitter import CharacterTextSplitter
+# [수정 1] RecursiveCharacterTextSplitter를 다시 import 합니다.
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from file_handler import get_documents_from_files
@@ -16,10 +18,8 @@ def get_retriever_from_source(source_type, source_input):
     with st.status("문서 처리 중...", expanded=True) as status:
         if source_type == "URL":
             status.update(label="URL 컨텐츠를 로드 중입니다...")
-            # SeleniumURLLoader는 동기적으로 작동하므로 asyncio가 필요 없습니다.
             loader = SeleniumURLLoader(urls=[source_input])
             documents = loader.load()
-
         elif source_type == "Files":
             status.update(label="파일을 파싱하고 있습니다...")
             documents = get_documents_from_files(source_input)
@@ -29,8 +29,13 @@ def get_retriever_from_source(source_type, source_input):
             return None
 
         status.update(label="문서를 청크(chunk)로 분할 중입니다...")
-        text_splitter = CharacterTextSplitter.from_tiktoken_encoder(
-            separator="\n", chunk_size=1000, chunk_overlap=100,
+        # [수정 2] 표와 같은 구조적 데이터가 깨지지 않도록, Markdown 구조에 최적화된
+        # RecursiveCharacterTextSplitter를 사용합니다.
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=100,
+            separators=["\n\n", "\n", " ", ""], # Markdown 구조를 우선적으로 고려
+            is_separator_regex=False,
         )
         splits = text_splitter.split_documents(documents)
         
@@ -40,11 +45,16 @@ def get_retriever_from_source(source_type, source_input):
         status.update(label=f"{len(splits)}개의 청크를 임베딩하고 있습니다...")
         vectorstore = FAISS.from_documents(splits, embeddings)
         
-        retriever = vectorstore.as_retriever(search_type="mmr", search_kwargs={'k': 3, 'fetch_k': 20})
+        # [수정 3] Contextual Compression Retriever 대신, 중복을 줄여주는 MMR 검색을 사용합니다.
+        # 이 방식이 더 안정적이고 출처 누락 문제가 없습니다.
+        retriever = vectorstore.as_retriever(
+            search_type="mmr",
+            search_kwargs={'k': 3, 'fetch_k': 20}
+        )
         status.update(label="문서 처리 완료!", state="complete")
     
     return retriever
-# '답변 생성 체인'만 만들도록 역할을 명확히 합니다.
+
 def get_document_chain(system_prompt):
     template = f"""{system_prompt}
 
