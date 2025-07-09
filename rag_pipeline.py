@@ -1,5 +1,4 @@
-# RAG 파이프라인 모듈 (rag_pipeline.py)
-# Retriever, Chain 등 모든 LangChain 관련 객체를 생성하고 관리하는 역할을 합니다.
+# rag_pipeline.py
 
 import streamlit as st
 import asyncio
@@ -10,8 +9,9 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import PlaywrightURLLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import LLMChainExtractor
 from file_handler import get_documents_from_files
 
 def get_retriever_from_source(source_type, source_input):
@@ -41,13 +41,20 @@ def get_retriever_from_source(source_type, source_input):
         status.update(label=f"{len(splits)}개의 청크를 임베딩하고 있습니다...")
         vectorstore = FAISS.from_documents(splits, embeddings)
         
-        # [수정] 복잡한 압축 리트리버 대신, 단순하고 안정적인 기본 리트리버를 생성하여 반환합니다. (출처 5개 검색)
-        retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
+        status.update(label="Retriever를 생성 중입니다...")
+        llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash", temperature=0, request_timeout=120)
+        
+        base_retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 20})
+        compressor = LLMChainExtractor.from_llm(llm)
+        compression_retriever = ContextualCompressionRetriever(
+            base_compressor=compressor, base_retriever=base_retriever
+        )
         status.update(label="문서 처리 완료!", state="complete")
     
-    return retriever
+    return compression_retriever
 
-def get_conversational_rag_chain(retriever, system_prompt):
+# '답변 생성 체인'만 만들도록 역할을 명확히 합니다.
+def get_document_chain(system_prompt):
     template = f"""{system_prompt}
 
 Answer the user's question based on the context provided below and the conversation history.
@@ -66,8 +73,7 @@ Context:
     )
     llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash", temperature=0)
     document_chain = create_stuff_documents_chain(llm, rag_prompt)
-    
-    return create_retrieval_chain(retriever, document_chain)
+    return document_chain
 
 def get_default_chain(system_prompt):
     prompt = ChatPromptTemplate.from_messages(
