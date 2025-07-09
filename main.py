@@ -1,13 +1,14 @@
-# main.py (최종 완성본)
+# main.py (최종 클린 버전)
 
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
-# get_document_chain 함수를 import 합니다.
 from rag_pipeline import get_retriever_from_source, get_document_chain, get_default_chain
 
+# API 키 로드
 load_dotenv()
 
+# --- 앱 기본 설정 ---
 st.set_page_config(page_title="Multimodal RAG Chatbot", page_icon="🤖")
 st.title("🤖 멀티모달 파일/URL 분석 RAG 챗봇")
 st.markdown(
@@ -17,6 +18,7 @@ st.markdown(
 """
 )
 
+# --- 세션 상태 초기화 ---
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 if "retriever" not in st.session_state:
@@ -24,10 +26,10 @@ if "retriever" not in st.session_state:
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = "당신은 문서 분석 전문가 AI 어시스턴트입니다. 주어진 문서의 텍스트와 테이블을 정확히 이해하고 상세하게 답변해주세요."
 
+# --- 사이드바 UI ---
 with st.sidebar:
     st.header("⚙️ 설정")
     st.divider()
-
     st.subheader("🤖 AI 페르소나 설정")
     prompt_input = st.text_area(
         "AI의 역할을 설정해주세요.", value=st.session_state.system_prompt, height=150
@@ -35,7 +37,6 @@ with st.sidebar:
     if st.button("페르소나 적용"):
         st.session_state.system_prompt = prompt_input
         st.toast("AI 페르소나가 적용되었습니다.")
-
     st.divider()
     st.subheader("🔎 분석 대상 설정")
     url_input = st.text_input("웹사이트 URL", placeholder="https://example.com")
