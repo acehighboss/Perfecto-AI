@@ -2,9 +2,44 @@
 # Streamlit UI를 그리고, 사용자 입력을 받아 다른 모듈의 함수를 호출하여 챗봇의 전체 흐름을 제어합니다.
 
 import streamlit as st
+import subprocess # 이 import가 누락되었습니다.
+import sys
+import time
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
-from rag_pipeline import get_retriever_from_source, get_conversational_rag_chain, get_default_chain
+from rag_pipeline import get_retriever_from_source, get_document_chain, get_default_chain
+
+# --- Playwright 브라우저 자동 설치 및 디버깅 로직 ---
+if "playwright_installed" not in st.session_state:
+    st.set_page_config(page_title="Initial Setup", layout="wide")
+    st.title("🛠️ 초기 설정: Playwright 브라우저 설치")
+    st.write("챗봇을 실행하기 전에 필요한 Playwright 브라우저를 설치합니다. 이 과정은 처음 한 번만 실행되며, 몇 분 정도 소요될 수 있습니다.")
+
+    with st.spinner("설치 명령을 실행 중입니다..."):
+        result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install"],
+            capture_output=True,
+            text=True,
+            encoding='utf-8'
+        )
+    
+    st.subheader("설치 로그")
+    st.code(f"Return Code: {result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}")
+
+    if result.returncode == 0:
+        st.success("브라우저 설치가 성공적으로 완료되었습니다! 5초 후 앱을 자동으로 다시 시작합니다.")
+        st.session_state["playwright_installed"] = True
+        time.sleep(5)
+        st.rerun()
+    else:
+        if "successfully" in result.stdout.lower():
+             st.success("브라우저 다운로드가 확인되었습니다. 5초 후 앱을 자동으로 다시 시작합니다.")
+             st.session_state["playwright_installed"] = True
+             time.sleep(5)
+             st.rerun()
+        else:
+            st.error("Playwright 브라우저 설치에 실패했습니다. 위의 로그를 확인해주세요.")
+            st.stop()
 
 load_dotenv()
 
