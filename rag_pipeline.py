@@ -10,13 +10,10 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import PlaywrightURLLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-# create_retrieval_chain은 이제 main.py에서 직접 처리하므로 여기서 필요 없습니다.
+from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import LLMChainExtractor
 from file_handler import get_documents_from_files
 
-# get_retriever_from_source 함수는 변경 없이 그대로 둡니다.
 def get_retriever_from_source(source_type, source_input):
     documents = [] 
     with st.status("문서 처리 중...", expanded=True) as status:
@@ -27,30 +24,30 @@ def get_retriever_from_source(source_type, source_input):
         elif source_type == "Files":
             status.update(label="파일을 파싱하고 있습니다...")
             documents = get_documents_from_files(source_input)
+
         if not documents:
             status.update(label="문서 로딩 실패.", state="error")
             return None
+
         status.update(label="문서를 청크(chunk)로 분할 중입니다...")
         text_splitter = CharacterTextSplitter.from_tiktoken_encoder(
             separator="\n", chunk_size=500, chunk_overlap=50,
         )
         splits = text_splitter.split_documents(documents)
+        
         status.update(label=f"임베딩 모델을 로컬에 로드 중입니다...")
         embeddings = SentenceTransformerEmbeddings(model_name='all-MiniLM-L6-v2')
+        
         status.update(label=f"{len(splits)}개의 청크를 임베딩하고 있습니다...")
         vectorstore = FAISS.from_documents(splits, embeddings)
-        status.update(label="Retriever를 생성 중입니다...")
-        llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash", temperature=0, request_timeout=120)
-        base_retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 20})
-        compressor = LLMChainExtractor.from_llm(llm)
-        compression_retriever = ContextualCompressionRetriever(
-            base_compressor=compressor, base_retriever=base_retriever
-        )
+        
+        # [수정] 복잡한 압축 리트리버 대신, 단순하고 안정적인 기본 리트리버를 생성하여 반환합니다. (출처 5개 검색)
+        retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
         status.update(label="문서 처리 완료!", state="complete")
-    return compression_retriever
+    
+    return retriever
 
-# [수정] 함수의 역할을 '답변 생성 체인'만 만들도록 명확히 변경합니다.
-def get_document_chain(system_prompt):
+def get_conversational_rag_chain(retriever, system_prompt):
     template = f"""{system_prompt}
 
 Answer the user's question based on the context provided below and the conversation history.
@@ -69,7 +66,8 @@ Context:
     )
     llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash", temperature=0)
     document_chain = create_stuff_documents_chain(llm, rag_prompt)
-    return document_chain
+    
+    return create_retrieval_chain(retriever, document_chain)
 
 def get_default_chain(system_prompt):
     prompt = ChatPromptTemplate.from_messages(
