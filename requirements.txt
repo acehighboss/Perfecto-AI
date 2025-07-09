@@ -6,8 +6,9 @@ langchain-openai
 langchain-experimental
 python-dotenv
 faiss-cpu
-llama-parse
 tiktoken
 sentence-transformers
 unstructured
 selenium
+pypdf # PyPDFLoader를 위해 추가
+python-docx # Docx2txtLoader를 위해 추가
