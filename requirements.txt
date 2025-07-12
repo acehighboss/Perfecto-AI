@@ -12,3 +12,5 @@ unstructured
 selenium
 PyMuPDF
 python-docx
+torch
+transform
