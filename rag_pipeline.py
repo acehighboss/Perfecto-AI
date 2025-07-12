@@ -35,10 +35,8 @@ def get_retriever_from_source(source_type, source_input):
         # RecursiveCharacterTextSplitter를 사용합니다.
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
-            chunk_overlap=200,
             separators=["\n\n", "\n", " ", ""], # Markdown 구조를 우선적으로 고려
             chunk_overlap=100,
-            separators=["\n\n", "\n", " ", ""],
             is_separator_regex=False,
         )
         splits = text_splitter.split_documents(documents)
