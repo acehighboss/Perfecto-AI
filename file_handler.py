@@ -1,35 +1,41 @@
-# file_handler.py (Upstage Loader 버전)
+# file_handler.py (Upstage Loader 수정 버전)
 
 import os
 import tempfile
 import streamlit as st
-from langchain_upstage import UpstageLayoutAnalysisLoader
+# [수정 1] 올바른 클래스 이름인 UpstageDocumentLoader를 import 합니다.
+from langchain_upstage import UpstageDocumentLoader
 
 def get_documents_from_files(uploaded_files):
     """
-    업로드된 파일들을 UpstageLayoutAnalysisLoader를 사용하여
+    업로드된 파일들을 UpstageDocumentLoader를 사용하여
     Markdown 형식으로 변환하고 구조를 분석합니다.
     """
     all_documents = []
-    # UpstageLayoutAnalysisLoader를 초기화합니다.
-    # 이 로더는 파일을 받아 서버로 보낸 뒤, 분석된 결과를 반환합니다.
-    layzer = UpstageLayoutAnalysisLoader(
-        api_key=os.getenv("UPSTAGE_API_KEY"), split="page"
-    )
-
+    
+    # 여러 파일을 효율적으로 처리하기 위해 임시 파일 경로를 먼저 리스트에 담습니다.
+    temp_file_paths = []
     for uploaded_file in uploaded_files:
-        # 임시 파일로 저장하여 경로를 얻음
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
             tmp_file.write(uploaded_file.getvalue())
-            tmp_file_path = tmp_file.name
-        
+            temp_file_paths.append(tmp_file.name)
+    
+    if temp_file_paths:
         try:
-            # 단일 파일에 대해 load()를 호출합니다.
-            docs = layzer.load(file_path=tmp_file_path)
+            # [수정 2] UpstageDocumentLoader를 초기화하고 한 번에 모든 파일을 처리합니다.
+            # 이 로더는 파일을 받아 서버로 보낸 뒤, 분석된 결과를 반환합니다.
+            loader = UpstageDocumentLoader(
+                file_path=temp_file_paths,
+                api_key=os.getenv("UPSTAGE_API_KEY"),
+                split="page"
+            )
+            docs = loader.load()
             all_documents.extend(docs)
         except Exception as e:
-            st.error(f"'{uploaded_file.name}' 파일 처리 중 오류 발생: {e}")
+            st.error(f"파일 처리 중 오류 발생: {e}")
         finally:
-            os.remove(tmp_file_path)
+            # 모든 임시 파일을 삭제합니다.
+            for path in temp_file_paths:
+                os.remove(path)
     
     return all_documents
