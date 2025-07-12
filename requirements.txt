@@ -13,4 +13,4 @@ selenium
 PyMuPDF
 python-docx
 torch
-transform
+transformers
