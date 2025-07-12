@@ -1,40 +1,35 @@
-# file_handler.py (PyMuPDFLoader 적용 버전)
+# file_handler.py (Upstage Loader 버전)
 
 import os
 import tempfile
 import streamlit as st
-# [수정] PyPDFLoader 대신 PyMuPDFLoader를 import
-from langchain_community.document_loaders import PyMuPDFLoader, Docx2txtLoader, TextLoader
+from langchain_upstage import UpstageLayoutAnalysisLoader
 
 def get_documents_from_files(uploaded_files):
     """
-    업로드된 파일들을 확장자에 맞는 기본 로더를 사용하여 처리합니다.
+    업로드된 파일들을 UpstageLayoutAnalysisLoader를 사용하여
+    Markdown 형식으로 변환하고 구조를 분석합니다.
     """
     all_documents = []
-    
-    # [수정] 파일 처리 스피너를 main.py로 옮겨 일관성을 유지합니다.
+    # UpstageLayoutAnalysisLoader를 초기화합니다.
+    # 이 로더는 파일을 받아 서버로 보낸 뒤, 분석된 결과를 반환합니다.
+    layzer = UpstageLayoutAnalysisLoader(
+        api_key=os.getenv("UPSTAGE_API_KEY"), split="page"
+    )
+
     for uploaded_file in uploaded_files:
+        # 임시 파일로 저장하여 경로를 얻음
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
             tmp_file.write(uploaded_file.getvalue())
             tmp_file_path = tmp_file.name
-
-        loader = None
+        
         try:
-            if uploaded_file.name.endswith(".pdf"):
-                # [수정] PDF 로더를 PyMuPDFLoader로 교체합니다.
-                loader = PyMuPDFLoader(tmp_file_path)
-            elif uploaded_file.name.endswith(".docx"):
-                loader = Docx2txtLoader(tmp_file_path)
-            elif uploaded_file.name.endswith(".txt"):
-                loader = TextLoader(tmp_file_path, encoding='utf-8')
-            
-            if loader:
-                # [수정] load_and_split() 대신 load()를 사용하여 분할은 다음 단계에서 처리하도록 합니다.
-                all_documents.extend(loader.load())
-
+            # 단일 파일에 대해 load()를 호출합니다.
+            docs = layzer.load(file_path=tmp_file_path)
+            all_documents.extend(docs)
         except Exception as e:
             st.error(f"'{uploaded_file.name}' 파일 처리 중 오류 발생: {e}")
         finally:
             os.remove(tmp_file_path)
-
+    
     return all_documents
