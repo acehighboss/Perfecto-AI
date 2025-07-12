@@ -60,7 +60,6 @@ def get_retriever_from_source(source_type, source_input):
         # 이 방식이 더 안정적이고 출처 누락 문제가 없습니다.
         retriever = vectorstore.as_retriever(
             search_type="similarity",
-            search_type="mmr",
             search_kwargs={'k': 3, 'fetch_k': 20}
         )
         status.update(label="문서 처리 완료!", state="complete")
