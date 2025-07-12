@@ -7,10 +7,7 @@ langchain-experimental
 python-dotenv
 faiss-cpu
 tiktoken
-sentence-transformers
-unstructured
 selenium
-PyMuPDF
-python-docx
-torch
-transformers
+unstructured
+sentence-transformers
+langchain-upstage
