@@ -13,7 +13,21 @@ from langchain_community.document_loaders import SeleniumURLLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.combine_documents import create_stuff_documents_chain
-@@ -29,60 +29,63 @@
+from file_handler import get_documents_from_files
+
+def get_retriever_from_source(source_type, source_input):
+    documents = [] 
+    with st.status("문서 처리 중...", expanded=True) as status:
+        if source_type == "URL":
+            status.update(label="URL 컨텐츠를 로드 중입니다...")
+            loader = SeleniumURLLoader(urls=[source_input])
+            documents = loader.load()
+        elif source_type == "Files":
+            status.update(label="파일을 파싱하고 있습니다...")
+            documents = get_documents_from_files(source_input)
+
+        if not documents:
+            status.update(label="문서 로딩 실패.", state="error")
             return None
 
         status.update(label="문서를 청크(chunk)로 분할 중입니다...")
