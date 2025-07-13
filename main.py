@@ -20,8 +20,9 @@ st.markdown(
 # --- 세션 상태 초기화 ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "retriever" not in st.session_state:
-    st.session_state.retriever = None
+# [수정] retriever 대신 vector_store를 세션에 저장합니다.
+if "vector_store" not in st.session_state:
+    st.session_state.vector_store = None
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = "당신은 문서 분석 전문가 AI 어시스턴트입니다. 주어진 문서의 텍스트와 테이블을 정확히 이해하고 상세하게 답변해주세요."
 
@@ -63,12 +64,12 @@ with st.sidebar:
             st.stop()
         
         st.session_state.messages = []
-        st.session_state.retriever = None
+        st.session_state.vector_store = None
 
         vector_store = get_vector_store(source_input, source_type)
         if vector_store:
-            # [수정] Retriever가 참고할 문서의 개수(k)를 5개로 늘립니다.
-            st.session_state.retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+            # [수정] vector_store 자체를 세션 상태에 저장합니다.
+            st.session_state.vector_store = vector_store
             st.success("분석이 완료되었습니다! 이제 질문해보세요.")
         else:
             st.error("벡터 저장소 생성에 실패했습니다. 파일을 다시 확인해주세요.")
@@ -85,7 +86,6 @@ for message in st.session_state.messages:
         if "sources" in message and message["sources"]:
             with st.expander("참고한 출처 보기"):
                 for i, source in enumerate(message["sources"]):
-                    # [수정] 출처 표시에 페이지 번호도 함께 보여줍니다.
                     source_info = f"출처 {i+1} (Source: {source.metadata.get('source', 'N/A')}, Page: {source.metadata.get('page', 'N/A')})"
                     st.markdown(f"**{source_info}**")
                     st.markdown(source.page_content)
@@ -109,9 +109,11 @@ if user_input:
             ai_answer = ""
             source_documents = []
 
-            if st.session_state.retriever:
+            # [수정] retriever 대신 vector_store의 존재 여부를 확인합니다.
+            if st.session_state.vector_store:
+                # [수정] 체인 생성 시 retriever가 아닌 vector_store를 전달합니다.
                 chain = get_conversational_rag_chain(
-                    st.session_state.retriever, st.session_state.system_prompt
+                    st.session_state.vector_store, st.session_state.system_prompt
                 )
                 for chunk in chain.stream({"input": user_input, "chat_history": chat_history}):
                     if "answer" in chunk:
@@ -132,7 +134,6 @@ if user_input:
             if source_documents:
                 with st.expander("참고한 출처 보기"):
                     for i, source in enumerate(source_documents):
-                        # [수정] 답변 아래 출처 표시에 페이지 번호도 함께 보여줍니다.
                         source_info = f"출처 {i+1} (Source: {source.metadata.get('source', 'N/A')}, Page: {source.metadata.get('page', 'N/A')})"
                         st.markdown(f"**{source_info}**")
                         st.markdown(source.page_content)
