@@ -12,7 +12,7 @@ st.set_page_config(page_title="Upstage RAG Chatbot", page_icon="🚀")
 st.title("🚀 Llamaparse 기반 문서/URL 분석 RAG 챗봇")
 st.markdown(
     """
-안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX)의 내용을 분석하고 답변합니다.
+안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX, TXT)의 내용을 분석하고 답변합니다.
 **Llamaparse**를 사용하여 **이미지, 테이블, 텍스트를 함께 인식**하고 질문에 답할 수 있습니다.
 """
 )
