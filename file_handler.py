@@ -42,14 +42,19 @@ def get_documents_from_files(uploaded_files):
             verbose=True,
         )
 
-        # 비동기 함수를 동기적으로 실행
         llama_index_documents = run_async(parser.aload_data(temp_file_paths))
         
-        # LangChain 문서 형식으로 변환
-        langchain_documents = [
-            LangChainDocument(page_content=doc.text, metadata={"source": doc.metadata.get("file_name", "-")})
-            for doc in llama_index_documents
-        ]
+        # [수정] LangChain 문서 형식으로 변환 시, 파일 이름과 페이지 번호를 메타데이터에 추가합니다.
+        langchain_documents = []
+        for doc in llama_index_documents:
+            # LlamaParse가 반환하는 메타데이터에서 파일명과 페이지 번호를 추출
+            file_name = doc.metadata.get("file_name", "N/A")
+            page_label = doc.metadata.get("page_label", "N/A")
+            
+            # 메타데이터를 재구성하여 LangChain Document 객체 생성
+            new_metadata = {"source": file_name, "page": page_label}
+            langchain_documents.append(LangChainDocument(page_content=doc.text, metadata=new_metadata))
+            
         return langchain_documents
 
     except Exception as e:
@@ -72,9 +77,10 @@ def get_vector_store(source_input, source_type: str):
             st.warning("문서에서 내용을 추출하지 못했습니다.")
             return None
 
+        # [수정] Chunk Size를 줄이고 Overlap을 늘려 더 촘촘하게 문서를 분할합니다.
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=100,
+            chunk_size=800,
+            chunk_overlap=150,
             length_function=len,
         )
         splits = text_splitter.split_documents(documents)
