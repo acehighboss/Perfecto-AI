@@ -9,11 +9,11 @@ load_dotenv()
 
 # --- 페이지 설정 ---
 st.set_page_config(page_title="Upstage RAG Chatbot", page_icon="🚀")
-st.title("🚀 Llamaparse 기반 문서/URL 분석 RAG 챗봇")
+st.title("🚀 문서/URL 분석 RAG 챗봇")
 st.markdown(
     """
-안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX, TXT)의 내용을 분석하고 답변합니다.
-**Llamaparse**를 사용하여 **이미지, 테이블, 텍스트를 함께 인식**하고 질문에 답할 수 있습니다.
+안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX 등)의 내용을 분석하고 답변합니다.
+**LlamaParse**를 사용하여 **이미지, 테이블, 텍스트를 함께 인식**하고 질문에 답할 수 있습니다.
 """
 )
 
@@ -29,23 +29,29 @@ if "system_prompt" not in st.session_state:
 with st.sidebar:
     st.header("⚙️ 설정")
     st.divider()
+
+    # --- [수정] 페르소나 설정 부분 ---
     st.subheader("🤖 AI 페르소나 설정")
     system_prompt_input = st.text_area(
-        "AI의 역할을 설정해주세요.", value=st.session_state.system_prompt, height=150
+        "AI의 역할을 설정해주세요.",
+        value=st.session_state.system_prompt,
+        height=150,
+        key="system_prompt_input_area" # 위젯의 상태를 유지하기 위한 key
     )
-    st.session_state.system_prompt = system_prompt_input
+    if st.button("페르소나 적용"):
+        st.session_state.system_prompt = system_prompt_input
+        st.success("페르소나가 적용되었습니다!")
+    # --- 수정 끝 ---
     
     st.divider()
     st.subheader("🔎 분석 대상 설정")
     url_input = st.text_input("웹사이트 URL", placeholder="https://example.com")
     uploaded_files = st.file_uploader(
-        "파일 업로드 (PDF, DOCX)", type=["pdf", "docx", "txt"], accept_multiple_files=True
+        "파일 업로드 (PDF, DOCX 등)", type=["pdf", "docx", "md", "txt"], accept_multiple_files=True
     )
-    st.info("Llamaparse는 이미지, 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.", icon="ℹ️")
+    st.info("LlamaParse는 이미지, 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.", icon="ℹ️")
     
     if st.button("분석 시작"):
-        st.session_state.messages = []
-        st.session_state.retriever = None
         source_input = None
         
         if uploaded_files:
@@ -57,14 +63,17 @@ with st.sidebar:
         else:
             st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
             st.stop()
-            
-        with st.spinner("문서를 분석하고 벡터 저장소를 생성 중입니다..."):
-            vector_store = get_vector_store(source_input, source_type)
-            if vector_store:
-                st.session_state.retriever = vector_store.as_retriever()
-                st.success("분석이 완료되었습니다! 이제 질문해보세요.")
-            else:
-                st.error("벡터 저장소 생성에 실패했습니다.")
+        
+        # 이전 대화 내용과 retriever 초기화
+        st.session_state.messages = []
+        st.session_state.retriever = None
+
+        vector_store = get_vector_store(source_input, source_type)
+        if vector_store:
+            st.session_state.retriever = vector_store.as_retriever()
+            st.success("분석이 완료되었습니다! 이제 질문해보세요.")
+        else:
+            st.error("벡터 저장소 생성에 실패했습니다. 파일을 다시 확인해주세요.")
 
     st.divider()
     if st.button("대화 초기화"):
@@ -78,14 +87,15 @@ for message in st.session_state.messages:
         if "sources" in message and message["sources"]:
             with st.expander("참고한 출처 보기"):
                 for i, source in enumerate(message["sources"]):
-                    st.text(f"--- 출처 {i+1} ---")
+                    st.markdown(f"**출처 {i+1}** (Source: {source.metadata.get('source', 'N/A')})")
                     st.markdown(source.page_content)
 
 user_input = st.chat_input("궁금한 내용을 물어보세요!")
 
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
-    st.chat_message("user").write(user_input)
+    with st.chat_message("user"):
+        st.markdown(user_input)
     
     chat_history = [
         HumanMessage(content=msg["content"]) if msg["role"] == "user" 
@@ -122,7 +132,7 @@ if user_input:
             if source_documents:
                 with st.expander("참고한 출처 보기"):
                     for i, source in enumerate(source_documents):
-                        st.text(f"--- 출처 {i+1} ---")
+                        st.markdown(f"**출처 {i+1}** (Source: {source.metadata.get('source', 'N/A')})")
                         st.markdown(source.page_content)
 
     except Exception as e:
