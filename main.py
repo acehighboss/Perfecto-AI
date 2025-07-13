@@ -41,7 +41,7 @@ with st.sidebar:
     uploaded_files = st.file_uploader(
         "파일 업로드 (PDF, DOCX)", type=["pdf", "docx", "txt"], accept_multiple_files=True
     )
-    st.info("Upstage Document Loader는 이미지, 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.", icon="ℹ️")
+    st.info("Llamaparse는 이미지, 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.", icon="ℹ️")
     
     if st.button("분석 시작"):
         st.session_state.messages = []
