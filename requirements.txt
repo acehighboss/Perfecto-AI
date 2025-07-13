@@ -2,7 +2,7 @@ streamlit
 langchain
 langchain-community
 langchain-google-genai
-upstage
+langchain-upstage
 faiss-cpu
 beautifulsoup4
 python-dotenv
