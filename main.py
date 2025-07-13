@@ -8,7 +8,7 @@ from rag_pipeline import get_conversational_rag_chain, get_default_chain
 load_dotenv()
 
 # --- 페이지 설정 ---
-st.set_page_config(page_title="Upstage RAG Chatbot", page_icon="🚀")
+st.set_page_config(page_title="RAG Chatbot", page_icon="🚀")
 st.title("🚀 문서/URL 분석 RAG 챗봇")
 st.markdown(
     """
