@@ -1,11 +1,22 @@
 import os
 import tempfile
 import streamlit as st
+import asyncio
 from langchain_community.document_loaders import WebBaseLoader
-from langchain_upstage import UpstageDocumentLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document as LangChainDocument
+from llama_parse import LlamaParse
+
+# LlamaParse를 비동기적으로 실행하기 위한 헬퍼 함수
+def run_async(coro):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
 
 def get_documents_from_url(url: str):
     """URL에서 문서를 로드합니다."""
@@ -17,52 +28,58 @@ def get_documents_from_url(url: str):
         return None
 
 def get_documents_from_files(uploaded_files):
-    """업로드된 파일에서 문서를 로드합니다. (UpstageDocumentLoader 사용)"""
-    temp_files = []
-    documents = []
+    """업로드된 파일에서 LlamaParse를 사용하여 문서를 로드합니다."""
+    temp_file_paths = []
     try:
         for uploaded_file in uploaded_files:
-            # 임시 파일로 저장하여 경로를 얻습니다.
             with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
                 tmp_file.write(uploaded_file.getvalue())
-                temp_files.append(tmp_file.name)
+                temp_file_paths.append(tmp_file.name)
         
-        # UpstageDocumentLoader를 사용하여 파일들을 한 번에 로드합니다.
-        loader = UpstageDocumentLoader(temp_files, api_key=os.getenv("UPSTAGE_API_KEY"))
-        documents = loader.load()
+        parser = LlamaParse(
+            api_key=os.getenv("LLAMA_CLOUD_API_KEY"),
+            result_type="markdown",
+            verbose=True,
+        )
+
+        # 비동기 함수를 동기적으로 실행
+        llama_index_documents = run_async(parser.aload_data(temp_file_paths))
+        
+        # LangChain 문서 형식으로 변환
+        langchain_documents = [
+            LangChainDocument(page_content=doc.text, metadata={"source": doc.metadata.get("file_name", "-")})
+            for doc in llama_index_documents
+        ]
+        return langchain_documents
+
     except Exception as e:
-        st.error(f"파일을 처리하는 중 오류가 발생했습니다: {e}")
+        st.error(f"LlamaParse로 파일을 처리하는 중 오류가 발생했습니다: {e}")
         return None
     finally:
-        # 임시 파일들을 삭제합니다.
-        for file_path in temp_files:
-            os.remove(file_path)
-    return documents
+        for path in temp_file_paths:
+            os.remove(path)
 
 def get_vector_store(source_input, source_type: str):
     """소스(파일 또는 URL)로부터 문서를 로드하고 벡터 저장소를 생성합니다."""
-    if source_type == "URL":
-        documents = get_documents_from_url(source_input)
-    elif source_type == "Files":
-        documents = get_documents_from_files(source_input)
-    else:
+    with st.spinner(f"{source_type}을(를) 분석하고 벡터 저장소를 생성 중입니다..."):
         documents = []
+        if source_type == "URL":
+            documents = get_documents_from_url(source_input)
+        elif source_type == "Files":
+            documents = get_documents_from_files(source_input)
 
-    if not documents:
-        st.warning("문서에서 내용을 추출하지 못했습니다.")
-        return None
+        if not documents:
+            st.warning("문서에서 내용을 추출하지 못했습니다.")
+            return None
 
-    # 텍스트를 의미 있는 단위로 분할합니다.
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=100,
-        length_function=len,
-        is_separator_regex=False,
-    )
-    splits = text_splitter.split_documents(documents)
-    
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=100,
+            length_function=len,
+        )
+        splits = text_splitter.split_documents(documents)
+        
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
-    # FAISS 벡터 저장소를 생성하고 반환합니다.
-    vectorstore = FAISS.from_documents(documents=splits, embedding=embeddings)
+        vectorstore = FAISS.from_documents(documents=splits, embedding=embeddings)
     return vectorstore
