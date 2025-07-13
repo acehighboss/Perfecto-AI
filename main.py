@@ -8,7 +8,7 @@ from rag_pipeline import get_conversational_rag_chain, get_default_chain
 load_dotenv()
 
 # --- 페이지 설정 ---
-st.set_page_config(page_title="RAG Chatbot", page_icon="🚀")
+st.set_page_config(page_title="Upstage RAG Chatbot", page_icon="🚀")
 st.title("🚀 문서/URL 분석 RAG 챗봇")
 st.markdown(
     """
@@ -30,18 +30,16 @@ with st.sidebar:
     st.header("⚙️ 설정")
     st.divider()
 
-    # --- [수정] 페르소나 설정 부분 ---
     st.subheader("🤖 AI 페르소나 설정")
     system_prompt_input = st.text_area(
         "AI의 역할을 설정해주세요.",
         value=st.session_state.system_prompt,
         height=150,
-        key="system_prompt_input_area" # 위젯의 상태를 유지하기 위한 key
+        key="system_prompt_input_area"
     )
     if st.button("페르소나 적용"):
         st.session_state.system_prompt = system_prompt_input
         st.success("페르소나가 적용되었습니다!")
-    # --- 수정 끝 ---
     
     st.divider()
     st.subheader("🔎 분석 대상 설정")
@@ -64,13 +62,13 @@ with st.sidebar:
             st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
             st.stop()
         
-        # 이전 대화 내용과 retriever 초기화
         st.session_state.messages = []
         st.session_state.retriever = None
 
         vector_store = get_vector_store(source_input, source_type)
         if vector_store:
-            st.session_state.retriever = vector_store.as_retriever()
+            # [수정] Retriever가 참고할 문서의 개수(k)를 5개로 늘립니다.
+            st.session_state.retriever = vector_store.as_retriever(search_kwargs={"k": 5})
             st.success("분석이 완료되었습니다! 이제 질문해보세요.")
         else:
             st.error("벡터 저장소 생성에 실패했습니다. 파일을 다시 확인해주세요.")
@@ -87,7 +85,9 @@ for message in st.session_state.messages:
         if "sources" in message and message["sources"]:
             with st.expander("참고한 출처 보기"):
                 for i, source in enumerate(message["sources"]):
-                    st.markdown(f"**출처 {i+1}** (Source: {source.metadata.get('source', 'N/A')})")
+                    # [수정] 출처 표시에 페이지 번호도 함께 보여줍니다.
+                    source_info = f"출처 {i+1} (Source: {source.metadata.get('source', 'N/A')}, Page: {source.metadata.get('page', 'N/A')})"
+                    st.markdown(f"**{source_info}**")
                     st.markdown(source.page_content)
 
 user_input = st.chat_input("궁금한 내용을 물어보세요!")
@@ -132,7 +132,9 @@ if user_input:
             if source_documents:
                 with st.expander("참고한 출처 보기"):
                     for i, source in enumerate(source_documents):
-                        st.markdown(f"**출처 {i+1}** (Source: {source.metadata.get('source', 'N/A')})")
+                        # [수정] 답변 아래 출처 표시에 페이지 번호도 함께 보여줍니다.
+                        source_info = f"출처 {i+1} (Source: {source.metadata.get('source', 'N/A')}, Page: {source.metadata.get('page', 'N/A')})"
+                        st.markdown(f"**{source_info}**")
                         st.markdown(source.page_content)
 
     except Exception as e:
