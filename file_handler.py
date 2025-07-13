@@ -1,7 +1,8 @@
 import os
 import tempfile
 import streamlit as st
-from langchain_community.document_loaders import WebBaseLoader, UpstageDocumentLoader
+from langchain_community.document_loaders import WebBaseLoader
+from langchain_upstage import UpstageDocumentLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
