@@ -217,14 +217,3 @@ if user_input:
     except Exception as e:
         st.chat_message("assistant").error(f"❌ 답변 생성 중 오류가 발생했습니다.\n\n오류: {e}")
         st.session_state.messages.pop()  # 오류 발생 시 마지막 메시지 제거
-
-# 푸터
-st.markdown("---")
-st.markdown(
-    """
-    <div style='text-align: center; color: #666;'>
-        🤖 RAG Chatbot - 정확한 출처 기반 답변 제공
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
