@@ -148,9 +148,6 @@ with st.sidebar:
     if st.button("🔄 대화 초기화"):
         st.session_state.clear()
         st.rerun()
-    
-    # API 키 상태 확인
-    display_api_status()
 
 # 메인 채팅 인터페이스
 st.subheader("💬 채팅")
