@@ -1,8 +1,11 @@
 streamlit
-python-dotenv
 langchain
-langchain-google-genai
+langchain-core
 langchain-community
+langchain-google-genai
+langchain-upstage
+langchain-text-splitters
 llama-parse
 faiss-cpu
-beautifulsoup4
+PyPDF2
+python-docx
