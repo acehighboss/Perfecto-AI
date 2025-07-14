@@ -7,8 +7,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers import ContextualCompressionRetriever, EnsembleRetriever
 from langchain.retrievers.document_compressors import LLMChainExtractor
+from langchain_community.retrievers import BM25Retriever
 
 class RAGPipeline:
     def __init__(self):
@@ -27,15 +28,15 @@ class RAGPipeline:
         )
 
     def get_system_prompt_template(self, system_prompt):
-        """시스템 프롬프트 템플릿"""
+        """시스템 프롬프트 템플릿 - 외부 지식 활용 허용"""
         template = system_prompt + """
 
 다음 컨텍스트를 바탕으로 사용자의 질문에 정확하게 답변해주세요.
 
 **답변 지침:**
-1. 제공된 컨텍스트의 정보만을 사용하여 답변하세요
-2. 답변할 때는 반드시 참조한 출처를 명시해주세요
-3. 컨텍스트에 없는 정보는 "제공된 문서에서 해당 정보를 찾을 수 없습니다"라고 명시하세요
+1. 제공된 컨텍스트의 정보를 우선적으로 사용하여 답변하세요
+2. 컨텍스트에 관련 정보가 부족한 경우, 일반적인 지식을 활용하여 보충 설명하되 "(일반 지식 기반)"이라고 표시하세요
+3. 답변할 때는 참조한 출처를 명시해주세요
 4. 정확한 정보만을 제공하고, 추측이나 가정은 피하세요
 5. 가능한 한 구체적이고 상세한 답변을 제공하세요
 
@@ -45,14 +46,14 @@ class RAGPipeline:
         return template
 
     def create_retriever(self, documents):
-        """문서에서 검색기 생성 (성능 최적화)"""
+        """하이브리드 검색기 생성 (BM25 + 벡터 검색)"""
         if not documents:
             st.warning("문서에서 내용을 추출하지 못했습니다.")
             return None
 
-        # 빠른 텍스트 분할
+        # 텍스트 분할
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=800,  # 작은 청크로 빠른 처리
+            chunk_size=800,
             chunk_overlap=80,
             separators=["\n\n", "\n", " ", ""]
         )
@@ -65,33 +66,52 @@ class RAGPipeline:
         
         st.info(f"📊 분할 완료: {len(splits)}개 청크 생성")
         
-        # FAISS 벡터스토어 생성 (배치 처리로 성능 향상)
         try:
-            # 청크가 많으면 배치로 처리
-            if len(splits) > 50:
-                st.info("대용량 문서 처리 중... 잠시만 기다려주세요.")
-                
+            # 1. 벡터 검색기 생성 (의미적 유사도)
             vectorstore = FAISS.from_documents(splits, self.embeddings)
-        except Exception as e:
-            st.error(f"벡터스토어 생성 오류: {e}")
-            return None
-
-        # 검색기 설정 (성능 최적화)
-        base_retriever = vectorstore.as_retriever(
-            search_type="similarity", 
-            search_kwargs={"k": 5}  # 검색 수 줄여서 속도 향상
-        )
-        
-        # 압축 검색기는 선택적으로 사용
-        if len(splits) < 20:  # 작은 문서만 압축 검색 사용
-            compressor = LLMChainExtractor.from_llm(self.llm)
-            compression_retriever = ContextualCompressionRetriever(
-                base_compressor=compressor,
-                base_retriever=base_retriever
+            vector_retriever = vectorstore.as_retriever(
+                search_type="similarity", 
+                search_kwargs={
+                    "k": 10,  # 6 → 10으로 증가
+                    "score_threshold": 0.15  # 0.3 → 0.15로 감소 (더 관대하게)
+                }
             )
-            return compression_retriever
-        else:
-            return base_retriever
+            
+            # 2. BM25 검색기 생성 (키워드 매칭)
+            bm25_retriever = BM25Retriever.from_documents(splits)
+            bm25_retriever.k = 8  # BM25로 8개 문서 검색
+            
+            # 3. 하이브리드 앙상블 검색기 생성
+            ensemble_retriever = EnsembleRetriever(
+                retrievers=[bm25_retriever, vector_retriever],
+                weights=[0.4, 0.6]  # BM25: 40%, 벡터: 60%
+            )
+            
+            st.success("🔍 하이브리드 검색기 (BM25 + 벡터) 생성 완료")
+            
+            # 4. 압축 검색기 적용 (선택적)
+            if len(splits) < 30:  # 작은 문서만 압축 검색 사용
+                compressor = LLMChainExtractor.from_llm(self.llm)
+                compression_retriever = ContextualCompressionRetriever(
+                    base_compressor=compressor,
+                    base_retriever=ensemble_retriever
+                )
+                return compression_retriever
+            else:
+                return ensemble_retriever
+                
+        except Exception as e:
+            st.error(f"검색기 생성 오류: {e}")
+            # 오류 발생 시 기본 벡터 검색기만 사용
+            try:
+                vectorstore = FAISS.from_documents(splits, self.embeddings)
+                return vectorstore.as_retriever(
+                    search_type="similarity", 
+                    search_kwargs={"k": 10, "score_threshold": 0.15}
+                )
+            except Exception as e2:
+                st.error(f"기본 검색기 생성도 실패: {e2}")
+                return None
 
     def create_conversational_rag_chain(self, retriever, system_prompt):
         """대화형 RAG 체인 생성"""
