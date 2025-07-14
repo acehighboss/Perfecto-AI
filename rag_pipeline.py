@@ -18,20 +18,15 @@ from nltk.tokenize import sent_tokenize
 # NLTK 설정 함수
 @st.cache_resource
 def setup_nltk():
-    """NLTK 리소스 자동 설정"""
-    try:
-        # punkt_tab 확인 및 다운로드
-        nltk.data.find('tokenizers/punkt_tab')
-    except LookupError:
-        st.info("NLTK punkt_tab 다운로드 중...")
-        nltk.download('punkt_tab', quiet=True)
-    
-    try:
-        # punkt 확인 및 다운로드 (백업용)
-        nltk.data.find('tokenizers/punkt')
-    except LookupError:
-        st.info("NLTK punkt 다운로드 중...")
-        nltk.download('punkt', quiet=True)
+    resources = ['punkt_tab', 'punkt']
+    for resource in resources:
+        try:
+            nltk.data.find(f'tokenizers/{resource}')
+        except LookupError:
+            nltk.download(resource, quiet=True)
+
+# 앱 시작 시 한 번만 실행
+setup_nltk()
 
 class SmartTextSplitter:
     def __init__(self, max_chunk_size=2000, overlap_sentences=2):
