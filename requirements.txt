@@ -9,3 +9,6 @@ llama-parse
 faiss-cpu
 PyPDF2
 python-docx
+openpyxl
+pandas
+nltk
