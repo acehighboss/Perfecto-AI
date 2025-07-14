@@ -12,3 +12,6 @@ python-docx
 openpyxl
 pandas
 nltk
+beautifulsoup4
+requests
+lxml
