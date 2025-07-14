@@ -4,11 +4,10 @@ from rag_pipeline import RAGPipeline
 
 # 페이지 설정
 st.set_page_config(page_title="Universal Table RAG Chatbot", page_icon="📊", layout="wide")
-st.title("📊 범용 표 분석 RAG 챗봇")
+st.title("📊RAG 챗봇")
 st.markdown(
     """
-    **모든 종류의 표와 데이터를 분석하는 범용 RAG 챗봇입니다.**
-    재무, 연구, 재고, 인사, 영업 등 다양한 도메인의 표 데이터를 정확하게 해석합니다.
+    **LlamaParser를 활용한 RAG 챗봇입니다.**
     """
 )
 
@@ -18,10 +17,9 @@ if "messages" not in st.session_state:
 if "retriever" not in st.session_state:
     st.session_state.retriever = None
 if "system_prompt" not in st.session_state:
-    st.session_state.system_prompt = """당신은 범용 데이터 분석 전문가 AI 어시스턴트입니다. 
-모든 종류의 표, 차트, 데이터를 정확히 해석하고 분석할 수 있습니다.
-재무, 연구, 재고, 인사, 영업 등 다양한 도메인의 데이터를 다룰 수 있으며,
-사용자의 질문에 대해 정확하고 상세한 답변을 제공합니다."""
+    st.session_state.system_prompt = """당신은 문서 분석 전문가 AI 어시스턴트입니다. 
+주어진 문서의 텍스트, 테이블, 이미지 내용을 정확히 이해하고 상세하게 답변해주세요.
+답변할 때는 반드시 참조한 출처를 명시하고, 정확한 정보만을 제공해주세요."""
 if "document_type" not in st.session_state:
     st.session_state.document_type = "general"
 
@@ -33,30 +31,6 @@ def initialize_components():
     return file_handler, rag_pipeline
 
 file_handler, rag_pipeline = initialize_components()
-
-def check_api_keys():
-    """API 키 상태 확인"""
-    keys_status = {}
-    required_keys = ["UPSTAGE_API_KEY", "LLAMA_CLOUD_API_KEY", "GOOGLE_API_KEY"]
-    
-    for key in required_keys:
-        if key in st.secrets:
-            keys_status[key] = True
-        else:
-            keys_status[key] = False
-    
-    return keys_status
-
-def display_api_status():
-    """API 키 상태 표시"""
-    st.subheader("🔑 API 키 상태")
-    keys_status = check_api_keys()
-    
-    for key, status in keys_status.items():
-        if status:
-            st.success(f"✅ {key}")
-        else:
-            st.error(f"❌ {key} 없음")
 
 def process_source(source_type, source_input, document_type):
     """소스 처리 및 검색기 생성"""
