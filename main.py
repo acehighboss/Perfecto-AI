@@ -7,8 +7,8 @@ st.set_page_config(page_title="Multimodal RAG Chatbot", page_icon="🤖")
 st.title("🤖 멀티모달 파일/URL 분석 RAG 챗봇")
 st.markdown(
     """
-    안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX)의 내용을 분석하고 답변합니다.
-    **LlamaParse**를 사용하여 **테이블과 텍스트를 함께 인식**하고 질문에 답할 수 있습니다.
+    안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일의 내용을 분석하고 답변합니다.
+    **PDF, DOCX, TXT** 파일을 지원하며, **LlamaParse**를 사용하여 복잡한 문서도 정확하게 분석합니다.
     """
 )
 
@@ -43,6 +43,21 @@ def process_source(source_type, source_input):
         total_length = sum(len(doc.page_content) for doc in documents)
         st.info(f"📄 추출된 문서: {len(documents)}개, 총 {total_length:,}자")
         
+        # 파일 타입별 분류 표시
+        file_types = {}
+        for doc in documents:
+            doc_type = doc.metadata.get("type", "unknown")
+            source = doc.metadata.get("source", "unknown")
+            if doc_type not in file_types:
+                file_types[doc_type] = []
+            file_types[doc_type].append(source)
+        
+        for doc_type, sources in file_types.items():
+            if doc_type == "txt":
+                st.success(f"📄 TXT 파일: {', '.join(sources)}")
+            elif doc_type == "llamaparse":
+                st.success(f"🔍 LlamaParse 처리: {', '.join(sources)}")
+        
         # 첫 번째 문서의 일부 내용 표시 (확인용)
         if documents[0].page_content:
             preview = documents[0].page_content[:500] + "..." if len(documents[0].page_content) > 500 else documents[0].page_content
@@ -60,6 +75,11 @@ def display_sources(source_documents):
         with st.expander("참고한 출처 보기 (마크다운 형식)"):
             for i, source in enumerate(source_documents):
                 st.text(f"--- 출처 {i+1} ---")
+                # 파일 타입 정보 표시
+                if hasattr(source, 'metadata') and source.metadata:
+                    file_type = source.metadata.get("type", "unknown")
+                    file_source = source.metadata.get("source", "unknown")
+                    st.caption(f"📁 {file_source} ({file_type})")
                 st.markdown(source.page_content)
 
 # 사이드바 설정
@@ -80,7 +100,6 @@ with st.sidebar:
     if st.button("🎯 페르소나 적용", type="primary", use_container_width=True):
         st.session_state.system_prompt = system_prompt_input
         st.success("✅ AI 페르소나가 적용되었습니다!")
-        # 페르소나 변경 시 기존 대화는 유지하되, 다음 대화부터 새 페르소나 적용
     
     st.divider()
     
@@ -90,14 +109,21 @@ with st.sidebar:
     # URL 입력
     url_input = st.text_input("웹사이트 URL", placeholder="https://example.com")
     
-    # 파일 업로드
+    # 파일 업로드 - TXT 파일 추가
     uploaded_files = st.file_uploader(
-        "파일 업로드 (PDF, DOCX)", 
-        type=["pdf", "docx"], 
-        accept_multiple_files=True
+        "파일 업로드", 
+        type=["pdf", "docx", "txt"], 
+        accept_multiple_files=True,
+        help="PDF, DOCX, TXT 파일을 업로드할 수 있습니다"
     )
     
-    st.info("LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.", icon="ℹ️")
+    # 파일 타입별 설명
+    st.info("""
+    **지원 파일 형식:**
+    - 📄 **TXT**: 텍스트 파일 (직접 처리)
+    - 📋 **PDF**: LlamaParse로 테이블/이미지 분석
+    - 📝 **DOCX**: LlamaParse로 복잡한 구조 분석
+    """, icon="ℹ️")
     
     # 분석 시작 버튼
     if st.button("🚀 분석 시작", type="primary", use_container_width=True):
@@ -105,7 +131,7 @@ with st.sidebar:
         st.session_state.retriever = None
         
         if uploaded_files:
-            with st.spinner("LlamaParse로 문서를 분석하고 있습니다..."):
+            with st.spinner("파일을 분석하고 있습니다..."):
                 st.session_state.retriever = process_source("Files", uploaded_files)
         elif url_input:
             with st.spinner("URL을 분석하고 있습니다..."):
@@ -130,16 +156,14 @@ with st.sidebar:
     # 대화 초기화 버튼
     if st.button("🔄 대화 초기화", type="secondary", use_container_width=True):
         # 페르소나는 유지하고 대화만 초기화
-        messages_backup = st.session_state.get("messages", [])
         system_prompt_backup = st.session_state.get("system_prompt", "")
-        retriever_backup = st.session_state.get("retriever", None)
         
         st.session_state.clear()
         
         # 필요한 것만 복원
         st.session_state["messages"] = []
         st.session_state["system_prompt"] = system_prompt_backup
-        st.session_state.retriever = None  # 대화 초기화 시 문서 분석도 초기화
+        st.session_state.retriever = None
         
         st.success("🔄 대화가 초기화되었습니다! (페르소나는 유지됨)")
         st.rerun()
