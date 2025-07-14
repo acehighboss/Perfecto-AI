@@ -72,9 +72,15 @@ with st.sidebar:
     system_prompt_input = st.text_area(
         "AI의 역할을 설정해주세요.", 
         value=st.session_state.system_prompt, 
-        height=150
+        height=150,
+        key="system_prompt_input"
     )
-    st.session_state.system_prompt = system_prompt_input
+    
+    # 시스템 프롬프트 적용 버튼 추가
+    if st.button("🎯 페르소나 적용", type="primary", use_container_width=True):
+        st.session_state.system_prompt = system_prompt_input
+        st.success("✅ AI 페르소나가 적용되었습니다!")
+        # 페르소나 변경 시 기존 대화는 유지하되, 다음 대화부터 새 페르소나 적용
     
     st.divider()
     
@@ -94,7 +100,7 @@ with st.sidebar:
     st.info("LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.", icon="ℹ️")
     
     # 분석 시작 버튼
-    if st.button("분석 시작", type="primary", use_container_width=True):
+    if st.button("🚀 분석 시작", type="primary", use_container_width=True):
         st.session_state.messages = []
         st.session_state.retriever = None
         
@@ -114,9 +120,28 @@ with st.sidebar:
     
     st.divider()
     
+    # 현재 적용된 페르소나 표시
+    st.subheader("📋 현재 적용된 페르소나")
+    with st.expander("현재 페르소나 보기"):
+        st.text(st.session_state.system_prompt)
+    
+    st.divider()
+    
     # 대화 초기화 버튼
-    if st.button("대화 초기화", type="secondary", use_container_width=True):
+    if st.button("🔄 대화 초기화", type="secondary", use_container_width=True):
+        # 페르소나는 유지하고 대화만 초기화
+        messages_backup = st.session_state.get("messages", [])
+        system_prompt_backup = st.session_state.get("system_prompt", "")
+        retriever_backup = st.session_state.get("retriever", None)
+        
         st.session_state.clear()
+        
+        # 필요한 것만 복원
+        st.session_state["messages"] = []
+        st.session_state["system_prompt"] = system_prompt_backup
+        st.session_state.retriever = None  # 대화 초기화 시 문서 분석도 초기화
+        
+        st.success("🔄 대화가 초기화되었습니다! (페르소나는 유지됨)")
         st.rerun()
 
 # 메인 채팅 인터페이스
