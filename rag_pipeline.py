@@ -273,7 +273,7 @@ class RAGPipeline:
             temperature=0,
             google_api_key=self.google_api_key
         )
-        self.text_splitter = SmartTextSplitter(max_chunk_size=1500, overlap_sentences=2)
+        self.text_splitter = SmartTextSplitter(max_chunk_size=1000, overlap_sentences=1)
 
     def get_universal_table_prompt(self, system_prompt):
         """범용 표 해석 프롬프트"""
