@@ -31,30 +31,6 @@ def initialize_components():
 
 file_handler, rag_pipeline = initialize_components()
 
-def check_api_keys():
-    """API 키 상태 확인"""
-    keys_status = {}
-    required_keys = ["UPSTAGE_API_KEY", "LLAMA_CLOUD_API_KEY", "GOOGLE_API_KEY"]
-    
-    for key in required_keys:
-        if key in st.secrets:
-            keys_status[key] = True
-        else:
-            keys_status[key] = False
-    
-    return keys_status
-
-def display_api_status():
-    """API 키 상태 표시"""
-    st.subheader("🔑 API 키 상태")
-    keys_status = check_api_keys()
-    
-    for key, status in keys_status.items():
-        if status:
-            st.success(f"✅ {key}")
-        else:
-            st.error(f"❌ {key} 없음")
-
 def process_source(source_type, source_input):
     """소스 처리 및 검색기 생성"""
     documents = []
