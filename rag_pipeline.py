@@ -15,11 +15,40 @@ import re
 import nltk
 from nltk.tokenize import sent_tokenize
 
-# NLTK 데이터 다운로드 (초기 실행 시 한 번만)
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
+# NLTK 설정 함수
+@st.cache_resource
+def setup_nltk():
+    """NLTK 리소스 자동 설정"""
+    try:
+        # punkt_tab 확인 및 다운로드
+        nltk.data.find('tokenizers/punkt_tab')
+    except LookupError:
+        st.info("NLTK punkt_tab 다운로드 중...")
+        nltk.download('punkt_tab', quiet=True)
+    
+    try:
+        # punkt 확인 및 다운로드 (백업용)
+        nltk.data.find('tokenizers/punkt')
+    except LookupError:
+        st.info("NLTK punkt 다운로드 중...")
+        nltk.download('punkt', quiet=True)
+
+class SmartTextSplitter:
+    def __init__(self, max_chunk_size=2000, overlap_sentences=2):
+        self.max_chunk_size = max_chunk_size
+        self.overlap_sentences = overlap_sentences
+        
+        # NLTK 설정
+        setup_nltk()
+    
+    def split_by_sentences(self, text):
+        """문장별 분할 (NLTK 사용)"""
+        try:
+            sentences = sent_tokenize(text)
+        except LookupError:
+            # NLTK 리소스가 없으면 자동 다운로드 후 재시도
+            setup_nltk()
+            sentences = sent_tokenize(text)
 
 class SmartTextSplitter:
     """문단/문장 기반 지능형 텍스트 분할기"""
