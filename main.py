@@ -3,12 +3,12 @@ from file_handler import FileHandler
 from rag_pipeline import RAGPipeline
 
 # 페이지 설정
-st.set_page_config(page_title="RAG Chatbot", page_icon="🤖", layout="wide")
-st.title("🤖 RAG 챗봇")
+st.set_page_config(page_title="Multimodal RAG Chatbot", page_icon="🤖")
+st.title("🤖 멀티모달 파일/URL 분석 RAG 챗봇")
 st.markdown(
     """
-    **정확한 출처 기반 답변을 제공하는 RAG 챗봇입니다.**
-    문서나 URL을 업로드하고 관련 질문을 하면 출처와 함께 정확한 답변을 받을 수 있습니다.
+    안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX)의 내용을 분석하고 답변합니다.
+    **LlamaParse**를 사용하여 **테이블과 텍스트를 함께 인식**하고 질문에 답할 수 있습니다.
     """
 )
 
@@ -18,9 +18,7 @@ if "messages" not in st.session_state:
 if "retriever" not in st.session_state:
     st.session_state.retriever = None
 if "system_prompt" not in st.session_state:
-    st.session_state.system_prompt = """당신은 문서 분석 전문가 AI 어시스턴트입니다. 
-제공된 문서의 내용을 정확히 이해하고 사용자의 질문에 대해 출처를 명시하며 정확한 답변을 제공합니다.
-추측이나 가정 없이 오직 문서에 기반한 정보만을 제공합니다."""
+    st.session_state.system_prompt = "당신은 문서 분석 전문가 AI 어시스턴트입니다. 주어진 문서의 텍스트와 테이블을 정확히 이해하고 상세하게 답변해주세요."
 
 # 핸들러 및 파이프라인 초기화
 @st.cache_resource
@@ -47,29 +45,24 @@ def process_source(source_type, source_input):
 def display_sources(source_documents):
     """출처 표시"""
     if source_documents:
-        with st.expander("📚 참고 출처 보기"):
+        with st.expander("참고한 출처 보기 (마크다운 형식)"):
             for i, source in enumerate(source_documents):
                 st.text(f"--- 출처 {i+1} ---")
                 st.markdown(source.page_content)
-                if hasattr(source, 'metadata') and source.metadata:
-                    st.json(source.metadata)
 
 # 사이드바 설정
 with st.sidebar:
     st.header("⚙️ 설정")
+    st.divider()
     
-    # 시스템 프롬프트 설정
-    st.subheader("🤖 시스템 프롬프트 설정")
+    # AI 페르소나 설정
+    st.subheader("🤖 AI 페르소나 설정")
     system_prompt_input = st.text_area(
-        "AI의 역할과 동작을 설정해주세요:",
-        value=st.session_state.system_prompt,
-        height=150,
-        key="system_prompt_input"
+        "AI의 역할을 설정해주세요.", 
+        value=st.session_state.system_prompt, 
+        height=150
     )
-    
-    if st.button("프롬프트 적용", type="primary"):
-        st.session_state.system_prompt = system_prompt_input
-        st.success("시스템 프롬프트가 적용되었습니다!")
+    st.session_state.system_prompt = system_prompt_input
     
     st.divider()
     
@@ -77,71 +70,42 @@ with st.sidebar:
     st.subheader("🔎 분석 대상 설정")
     
     # URL 입력
-    url_input = st.text_input(
-        "웹사이트 URL",
-        placeholder="https://example.com",
-        help="분석할 웹사이트의 URL을 입력하세요"
-    )
+    url_input = st.text_input("웹사이트 URL", placeholder="https://example.com")
     
     # 파일 업로드
     uploaded_files = st.file_uploader(
-        "파일 업로드",
-        type=["pdf", "docx", "txt"],
-        accept_multiple_files=True,
-        help="PDF, DOCX, TXT 파일을 업로드할 수 있습니다"
+        "파일 업로드 (PDF, DOCX)", 
+        type=["pdf", "docx"], 
+        accept_multiple_files=True
     )
     
-    # 분석 시작 버튼 (파일 업로드 바로 아래)
-    if st.button("🚀 분석 시작", type="primary", use_container_width=True):
+    st.info("LlamaParse는 테이블, 텍스트가 포함된 문서 분석에 최적화되어 있습니다.", icon="ℹ️")
+    
+    # 분석 시작 버튼
+    if st.button("분석 시작", type="primary", use_container_width=True):
         st.session_state.messages = []
         st.session_state.retriever = None
         
         if uploaded_files:
-            with st.spinner("📄 파일을 분석하고 있습니다..."):
+            with st.spinner("LlamaParse로 문서를 분석하고 있습니다..."):
                 st.session_state.retriever = process_source("Files", uploaded_files)
         elif url_input:
-            with st.spinner("🌐 URL을 분석하고 있습니다..."):
+            with st.spinner("URL을 분석하고 있습니다..."):
                 st.session_state.retriever = process_source("URL", url_input)
         else:
-            st.warning("⚠️ 분석할 URL을 입력하거나 파일을 업로드해주세요.")
+            st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
 
         if st.session_state.retriever:
-            st.success("✅ 분석이 완료되었습니다! 이제 질문해보세요.")
+            st.success("분석이 완료되었습니다! 이제 질문해보세요.")
     
     st.divider()
     
-    # 사용 팁
-    st.subheader("💡 사용 팁")
-    st.info("""
-    **효과적인 질문 방법:**
-    - 구체적이고 명확한 질문을 하세요
-    - "어디에 나와 있나요?" 같은 출처 확인 질문도 유용합니다
-    - 여러 관점에서 질문해보세요
-    
-    **예시 질문:**
-    - "주요 내용을 요약해주세요"
-    - "핵심 포인트는 무엇인가요?"
-    - "이 문서의 결론은 무엇인가요?"
-    """)
-    
-    # 사이드바 맨 아래에 대화 초기화 버튼
-    st.markdown("---")
-    if st.button("🔄 대화 초기화", type="secondary", use_container_width=True):
-        # 세션 상태 초기화
-        for key in list(st.session_state.keys()):
-            if key not in ['system_prompt']:  # 시스템 프롬프트는 유지
-                del st.session_state[key]
-        
-        # 기본값으로 재설정
-        st.session_state["messages"] = []
-        st.session_state.retriever = None
-        
-        st.success("🔄 대화가 초기화되었습니다!")
+    # 대화 초기화 버튼
+    if st.button("대화 초기화", type="secondary", use_container_width=True):
+        st.session_state.clear()
         st.rerun()
 
 # 메인 채팅 인터페이스
-st.subheader("💬 채팅")
-
 # 이전 메시지 표시
 for message in st.session_state["messages"]:
     with st.chat_message(message["role"]):
@@ -150,7 +114,7 @@ for message in st.session_state["messages"]:
             display_sources(message["sources"])
 
 # 사용자 입력
-user_input = st.chat_input("문서에 대해 궁금한 내용을 물어보세요! 🤔")
+user_input = st.chat_input("궁금한 내용을 물어보세요!")
 
 if user_input:
     # 사용자 메시지 추가
@@ -215,5 +179,5 @@ if user_input:
                 })
     
     except Exception as e:
-        st.chat_message("assistant").error(f"❌ 답변 생성 중 오류가 발생했습니다.\n\n오류: {e}")
-        st.session_state.messages.pop()  # 오류 발생 시 마지막 메시지 제거
+        st.chat_message("assistant").error(f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다.\n\n오류: {e}")
+        st.session_state.messages.pop()
