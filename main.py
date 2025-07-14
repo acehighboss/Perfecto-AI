@@ -3,12 +3,12 @@ from file_handler import FileHandler
 from rag_pipeline import RAGPipeline
 
 # 페이지 설정
-st.set_page_config(page_title="Advanced RAG Chatbot", page_icon="🤖", layout="wide")
-st.title("🤖 고급 RAG 챗봇 - URL/파일 분석")
+st.set_page_config(page_title="RAG Chatbot", page_icon="🤖", layout="wide")
+st.title("🤖 RAG 챗봇")
 st.markdown(
     """
-    **LlamaParser**, **UpstageEmbeddings**, **RecursiveCharacterTextSplitter**를 활용한 고성능 RAG 챗봇입니다.
-    URL과 다양한 파일 형식(PDF, DOCX, TXT)을 지원하며, 테이블과 이미지 텍스트도 정확하게 분석합니다.
+    **정확한 출처 기반 답변을 제공하는 RAG 챗봇입니다.**
+    문서나 URL을 업로드하고 관련 질문을 하면 출처와 함께 정확한 답변을 받을 수 있습니다.
     """
 )
 
@@ -19,8 +19,8 @@ if "retriever" not in st.session_state:
     st.session_state.retriever = None
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = """당신은 문서 분석 전문가 AI 어시스턴트입니다. 
-주어진 문서의 텍스트, 테이블, 이미지 내용을 정확히 이해하고 상세하게 답변해주세요.
-답변할 때는 반드시 참조한 출처를 명시하고, 정확한 정보만을 제공해주세요."""
+제공된 문서의 내용을 정확히 이해하고 사용자의 질문에 대해 출처를 명시하며 정확한 답변을 제공합니다.
+추측이나 가정 없이 오직 문서에 기반한 정보만을 제공합니다."""
 
 # 핸들러 및 파이프라인 초기화
 @st.cache_resource
@@ -91,118 +91,13 @@ with st.sidebar:
         help="PDF, DOCX, TXT 파일을 업로드할 수 있습니다"
     )
     
-    st.info("💡 LlamaParse를 사용하여 테이블과 이미지 텍스트를 정확하게 분석합니다.", icon="ℹ️")
-    
     # 분석 시작 버튼
     if st.button("🚀 분석 시작", type="primary"):
         st.session_state.messages = []
         st.session_state.retriever = None
         
         if uploaded_files:
-            with st.spinner("📄 LlamaParse로 파일을 분석하고 있습니다..."):
+            with st.spinner("📄 파일을 분석하고 있습니다..."):
                 st.session_state.retriever = process_source("Files", uploaded_files)
         elif url_input:
             with st.spinner("🌐 URL을 분석하고 있습니다..."):
-                st.session_state.retriever = process_source("URL", url_input)
-        else:
-            st.warning("⚠️ 분석할 URL을 입력하거나 파일을 업로드해주세요.")
-
-        if st.session_state.retriever:
-            st.success("✅ 분석이 완료되었습니다! 이제 질문해보세요.")
-    
-    st.divider()
-    
-    # 대화 초기화
-    if st.button("🔄 대화 초기화"):
-        st.session_state.clear()
-        st.rerun()
-
-# 메인 채팅 인터페이스
-st.subheader("💬 채팅")
-
-# 이전 메시지 표시
-for message in st.session_state["messages"]:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-        if "sources" in message and message["sources"]:
-            display_sources(message["sources"])
-
-# 사용자 입력
-user_input = st.chat_input("궁금한 내용을 물어보세요! 🤔")
-
-if user_input:
-    # 사용자 메시지 추가
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    st.chat_message("user").write(user_input)
-    
-    try:
-        # 채팅 히스토리 생성
-        chat_history = rag_pipeline.format_chat_history(st.session_state.messages)
-        
-        if st.session_state.retriever:
-            # RAG 체인 사용
-            chain = rag_pipeline.create_conversational_rag_chain(
-                st.session_state.retriever, 
-                st.session_state.system_prompt
-            )
-            
-            with st.chat_message("assistant"):
-                container = st.empty()
-                ai_answer = ""
-                source_documents = []
-                
-                # 스트리밍 응답
-                for chunk in chain.stream({
-                    "input": user_input, 
-                    "chat_history": chat_history
-                }):
-                    if "answer" in chunk:
-                        ai_answer += chunk["answer"]
-                        container.markdown(ai_answer)
-                    if "context" in chunk and not source_documents:
-                        source_documents = chunk["context"]
-                
-                # 메시지 저장
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": ai_answer, 
-                    "sources": source_documents
-                })
-                
-                # 출처 표시
-                display_sources(source_documents)
-        else:
-            # 기본 체인 사용
-            chain = rag_pipeline.create_default_chain(st.session_state.system_prompt)
-            
-            with st.chat_message("assistant"):
-                container = st.empty()
-                ai_answer = ""
-                
-                for token in chain.stream({
-                    "question": user_input, 
-                    "chat_history": chat_history
-                }):
-                    ai_answer += token
-                    container.markdown(ai_answer)
-                
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": ai_answer, 
-                    "sources": []
-                })
-    
-    except Exception as e:
-        st.chat_message("assistant").error(f"❌ 답변 생성 중 오류가 발생했습니다.\n\n오류: {e}")
-        st.session_state.messages.pop()  # 오류 발생 시 마지막 메시지 제거
-
-# 푸터
-st.markdown("---")
-st.markdown(
-    """
-    <div style='text-align: center; color: #666;'>
-        🤖 Advanced RAG Chatbot powered by LlamaParser + UpstageEmbeddings + Gemini
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
