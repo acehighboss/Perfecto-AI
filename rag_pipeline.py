@@ -3,7 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -28,19 +28,14 @@ class RAGPipeline:
 
     def get_system_prompt_template(self, system_prompt):
         """시스템 프롬프트 템플릿"""
-        template = system_prompt + """
+        template = f"""{system_prompt}
 
-다음 컨텍스트를 바탕으로 사용자의 질문에 정확하게 답변해주세요.
+Answer the user's question based on the context provided below and the conversation history.
+The context may include text and tables in markdown format. You must be able to understand and answer based on them.
+If you don't know the answer, just say that you don't know. Don't make up an answer.
 
-**답변 지침:**
-1. 제공된 컨텍스트의 정보만을 사용하여 답변하세요
-2. 답변할 때는 반드시 참조한 출처를 명시해주세요
-3. 컨텍스트에 없는 정보는 "제공된 문서에서 해당 정보를 찾을 수 없습니다"라고 명시하세요
-4. 정확한 정보만을 제공하고, 추측이나 가정은 피하세요
-5. 가능한 한 구체적이고 상세한 답변을 제공하세요
-
-컨텍스트:
-{context}
+Context:
+{{context}}
 """
         return template
 
@@ -50,11 +45,10 @@ class RAGPipeline:
             st.warning("문서에서 내용을 추출하지 못했습니다.")
             return None
 
-        # 텍스트 분할 (Google 임베딩 모델에 최적화)
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,  # Google 모델에 적합한 크기
-            chunk_overlap=100,
-            separators=["\n\n", "\n", " ", ""]
+        # SemanticChunker 사용 (Google 임베딩 모델과 함께)
+        text_splitter = SemanticChunker(
+            self.embeddings, 
+            breakpoint_threshold_type="percentile"
         )
         
         splits = text_splitter.split_documents(documents)
@@ -74,11 +68,8 @@ class RAGPipeline:
 
         # 검색기 설정
         base_retriever = vectorstore.as_retriever(
-            search_type="similarity_score_threshold",
-            search_kwargs={
-                "k": 6,
-                "score_threshold": 0.3
-            }
+            search_type="similarity", 
+            search_kwargs={"k": 10}
         )
         
         # 압축 검색기 사용
