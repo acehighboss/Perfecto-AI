@@ -144,44 +144,6 @@ with st.sidebar:
     
     st.divider()
     
-    # 질문 가이드
-    st.subheader("💡 효과적인 질문 방법")
-    
-    question_examples = {
-        "financial": [
-            "2024년 4분기 각 부문별 매출액을 표로 정리해줘",
-            "전년 대비 영업이익 증감률은?",
-            "부채비율이 가장 높은 분기는?"
-        ],
-        "research": [
-            "실험군별 평균값과 표준편차를 표로 보여줘",
-            "p-value가 0.05 미만인 항목들은?",
-            "가장 높은 상관관계를 보이는 변수는?"
-        ],
-        "inventory": [
-            "품목별 재고 수량과 금액을 정리해줘",
-            "재고 회전율이 가장 낮은 품목은?",
-            "월별 입고량 변화 추이는?"
-        ],
-        "hr": [
-            "부서별 평균 급여를 표로 보여줘",
-            "승진 대상자 명단과 평가 점수는?",
-            "연차 사용률이 가장 높은 부서는?"
-        ],
-        "sales": [
-            "지역별 매출 실적을 표로 정리해줘",
-            "목표 달성률이 가장 높은 제품은?",
-            "월별 신규 고객 수 변화는?"
-        ]
-    }
-    
-    if selected_type in question_examples:
-        st.write("**예시 질문:**")
-        for example in question_examples[selected_type]:
-            st.write(f"• {example}")
-    
-    st.divider()
-    
     # 대화 초기화
     if st.button("🔄 대화 초기화"):
         st.session_state.clear()
