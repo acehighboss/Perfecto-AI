@@ -27,15 +27,21 @@ class RAGPipeline:
         )
 
     def get_system_prompt_template(self, system_prompt):
-        """시스템 프롬프트 템플릿"""
-        template = f"""{system_prompt}
+        """시스템 프롬프트 템플릿 - context 변수 수정"""
+        # f-string 사용하지 않고 직접 문자열 연결
+        template = system_prompt + """
 
-Answer the user's question based on the context provided below and the conversation history.
-The context may include text and tables in markdown format. You must be able to understand and answer based on them.
-If you don't know the answer, just say that you don't know. Don't make up an answer.
+다음 컨텍스트를 바탕으로 사용자의 질문에 정확하게 답변해주세요.
+컨텍스트에는 분석된 문서의 내용이 포함되어 있습니다.
 
-Context:
-{{context}}
+**중요한 지침:**
+1. 제공된 컨텍스트의 정보를 반드시 활용하여 답변하세요
+2. 컨텍스트에 관련 정보가 있다면 "제공되지 않았습니다"라고 말하지 마세요
+3. 컨텍스트의 내용을 바탕으로 구체적이고 상세한 답변을 제공하세요
+4. 답변할 때는 참조한 출처를 명시해주세요
+
+컨텍스트:
+{context}
 """
         return template
 
@@ -46,18 +52,28 @@ Context:
             return None
 
         # SemanticChunker 사용 (Google 임베딩 모델과 함께)
-        text_splitter = SemanticChunker(
-            self.embeddings, 
-            breakpoint_threshold_type="percentile"
-        )
-        
-        splits = text_splitter.split_documents(documents)
+        try:
+            text_splitter = SemanticChunker(
+                self.embeddings, 
+                breakpoint_threshold_type="percentile"
+            )
+            
+            splits = text_splitter.split_documents(documents)
+        except Exception as e:
+            st.warning(f"SemanticChunker 실패, 기본 분할 사용: {e}")
+            # 기본 분할기로 대체
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=100
+            )
+            splits = text_splitter.split_documents(documents)
         
         if not splits:
             st.warning("문서 분할에 실패했습니다.")
             return None
         
-        st.info(f"📊 분할 완료: {len(splits)}개 청크 생성 (Google text-embedding-004 모델 사용)")
+        st.info(f"📊 분할 완료: {len(splits)}개 청크 생성")
         
         # FAISS 벡터스토어 생성
         try:
@@ -66,20 +82,14 @@ Context:
             st.error(f"벡터스토어 생성 오류: {e}")
             return None
 
-        # 검색기 설정
+        # 검색기 설정 - 더 많은 문서 검색
         base_retriever = vectorstore.as_retriever(
             search_type="similarity", 
-            search_kwargs={"k": 10}
+            search_kwargs={"k": 8}  # 더 많은 관련 문서 검색
         )
         
-        # 압축 검색기 사용
-        compressor = LLMChainExtractor.from_llm(self.llm)
-        compression_retriever = ContextualCompressionRetriever(
-            base_compressor=compressor,
-            base_retriever=base_retriever
-        )
-        
-        return compression_retriever
+        # 압축 검색기 사용하지 않고 기본 검색기만 사용 (안정성 우선)
+        return base_retriever
 
     def create_conversational_rag_chain(self, retriever, system_prompt):
         """대화형 RAG 체인 생성"""
