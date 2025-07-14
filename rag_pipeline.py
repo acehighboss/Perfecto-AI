@@ -1,74 +1,146 @@
+import streamlit as st
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_upstage import UpstageEmbeddings
+from langchain_core.output_parsers import StrOutputParser
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import LLMChainExtractor
 
-# 이 파일만 수정하면 됩니다.
+class RAGPipeline:
+    def __init__(self):
+        self.upstage_api_key = st.secrets["UPSTAGE_API_KEY"]
+        self.google_api_key = st.secrets["GOOGLE_API_KEY"]
+        self.embeddings = UpstageEmbeddings(
+            api_key=self.upstage_api_key,
+            model="solar-embedding-1-large"
+        )
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash", 
+            temperature=0,
+            google_api_key=self.google_api_key
+        )
 
-def get_conversational_rag_chain(vector_store, system_prompt: str):
-    """
-    대화 내역과 질문 재작성을 모두 고려하는 가장 진보된 RAG 체인을 생성합니다.
-    """
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+    def create_retriever(self, documents):
+        """문서에서 검색기 생성"""
+        if not documents:
+            st.warning("문서에서 내용을 추출하지 못했습니다.")
+            return None
 
-    # 1. Retriever 생성 (main.py에서 k=5로 설정된 retriever를 그대로 사용)
-    retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+        # RecursiveCharacterTextSplitter 사용
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            length_function=len,
+            separators=["\n\n", "\n", " ", ""]
+        )
+        
+        splits = text_splitter.split_documents(documents)
+        
+        if not splits:
+            st.warning("문서 분할에 실패했습니다.")
+            return None
+        
+        # FAISS 벡터스토어 생성
+        try:
+            vectorstore = FAISS.from_documents(splits, self.embeddings)
+        except Exception as e:
+            st.error(f"벡터스토어 생성 오류: {e}")
+            return None
 
-    # 2. "질문 재작성"을 위한 프롬프트와 체인 생성
-    #    - 대화의 맥락을 보고, 후속 질문을 독립적인 검색 쿼리로 재작성합니다.
-    contextualize_q_system_prompt = (
-        "Given a chat history and the latest user question "
-        "which might reference context in the chat history, "
-        "formulate a standalone question which can be understood "
-        "without the chat history. Do NOT answer the question, "
-        "just reformulate it if needed and otherwise return it as is."
-    )
-    contextualize_q_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", contextualize_q_system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ]
-    )
-    history_aware_retriever = create_history_aware_retriever(
-        llm, retriever, contextualize_q_prompt
-    )
+        # 검색기 설정
+        base_retriever = vectorstore.as_retriever(
+            search_type="similarity_score_threshold",
+            search_kwargs={
+                "k": 8,
+                "score_threshold": 0.3
+            }
+        )
+        
+        # 압축 검색기 사용
+        compressor = LLMChainExtractor.from_llm(self.llm)
+        compression_retriever = ContextualCompressionRetriever(
+            base_compressor=compressor,
+            base_retriever=base_retriever
+        )
+        
+        return compression_retriever
 
-    # 3. 재작성된 질문을 바탕으로 문서를 검색한 후, 원래 질문과 함께 답변을 생성하는 체인
-    #    - 여기서 system_prompt (페르소나)가 사용됩니다.
-    template = f"""{system_prompt}
+    def create_conversational_rag_chain(self, retriever, system_prompt):
+        """대화형 RAG 체인 생성"""
+        template = f"""{system_prompt}
 
-    Answer the user's question based on the context provided below and the conversation history.
-    The context may include text and tables in markdown format. You must be able to understand and answer based on them.
-    If you don't know the answer, just say that you don't know. Don't make up an answer.
+다음 컨텍스트를 바탕으로 사용자의 질문에 답변해주세요.
+컨텍스트에는 텍스트, 테이블, 이미지 내용이 마크다운 형식으로 포함되어 있을 수 있습니다.
 
-    Context:
-    {{context}}
-    """
-    qa_prompt = ChatPromptTemplate.from_messages(
-        [
+중요한 지침:
+1. 답변할 때는 반드시 참조한 출처를 명시해주세요.
+2. 테이블이나 구조화된 데이터는 정확히 해석해주세요.
+3. 확실하지 않은 정보는 "확실하지 않음"이라고 명시해주세요.
+4. 질문과 관련된 키워드를 컨텍스트에서 찾아 정확한 답변을 제공해주세요.
+
+컨텍스트:
+{{context}}
+"""
+        
+        rag_prompt = ChatPromptTemplate.from_messages([
             ("system", template),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ]
-    )
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("user", "{input}"),
+        ])
+        
+        document_chain = create_stuff_documents_chain(self.llm, rag_prompt)
+        return create_retrieval_chain(retriever, document_chain)
 
-    # 4. 문서들을 하나의 컨텍스트로 결합하는 체인
-    Youtube_chain = create_stuff_documents_chain(llm, qa_prompt)
-
-    # 5. history_aware_retriever와 Youtube_chain을 결합한 최종 RAG 체인
-    return create_retrieval_chain(history_aware_retriever, Youtube_chain)
-
-
-def get_default_chain(system_prompt: str):
-    """문서 컨텍스트 없이 일반적인 대답을 하는 체인을 생성합니다."""
-    prompt = ChatPromptTemplate.from_messages(
-        [
+    def create_default_chain(self, system_prompt):
+        """기본 체인 생성"""
+        prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
             MessagesPlaceholder(variable_name="chat_history"),
             ("user", "{question}"),
-        ]
-    )
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-    return prompt | llm | StrOutputParser()
+        ])
+        return prompt | self.llm | StrOutputParser()
+
+    def format_chat_history(self, messages):
+        """채팅 히스토리 포맷팅"""
+        chat_history = []
+        for msg in messages[:-1]:
+            if msg["role"] == "user":
+                chat_history.append(HumanMessage(content=msg["content"]))
+            else:
+                chat_history.append(AIMessage(content=msg["content"]))
+        return chat_history
+
+    def stream_response(self, chain, user_input, chat_history):
+        """스트리밍 응답 생성"""
+        ai_answer = ""
+        source_documents = []
+        
+        for chunk in chain.stream({
+            "input": user_input, 
+            "chat_history": chat_history
+        }):
+            if "answer" in chunk:
+                ai_answer += chunk["answer"]
+                yield chunk["answer"]
+            if "context" in chunk and not source_documents:
+                source_documents = chunk["context"]
+        
+        return ai_answer, source_documents
+
+    def stream_default_response(self, chain, user_input, chat_history):
+        """기본 체인 스트리밍 응답"""
+        ai_answer = ""
+        
+        for token in chain.stream({
+            "question": user_input, 
+            "chat_history": chat_history
+        }):
+            ai_answer += token
+            yield token
+        
+        return ai_answer
