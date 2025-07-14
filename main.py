@@ -117,14 +117,6 @@ with st.sidebar:
         help="PDF, DOCX, TXT 파일을 업로드할 수 있습니다"
     )
     
-    # 파일 타입별 설명
-    st.info("""
-    **지원 파일 형식:**
-    - 📄 **TXT**: 텍스트 파일 (직접 처리)
-    - 📋 **PDF**: LlamaParse로 테이블/이미지 분석
-    - 📝 **DOCX**: LlamaParse로 복잡한 구조 분석
-    """, icon="ℹ️")
-    
     # 분석 시작 버튼
     if st.button("🚀 분석 시작", type="primary", use_container_width=True):
         st.session_state.messages = []
