@@ -91,19 +91,140 @@ with st.sidebar:
         help="PDF, DOCX, TXT 파일을 업로드할 수 있습니다"
     )
     
-    # 분석 시작 버튼
-if st.button("🚀 분석 시작", type="primary"):
-    st.session_state.messages = []
-    st.session_state.retriever = None
-    
-    if uploaded_files:
-        with st.spinner("📄 파일을 분석하고 있습니다..."):
-            st.session_state.retriever = process_source("Files", uploaded_files)
-    elif url_input:
-        with st.spinner("🌐 URL을 분석하고 있습니다..."):
-            st.session_state.retriever = process_source("URL", url_input)
-    else:
-        st.warning("⚠️ 분석할 URL을 입력하거나 파일을 업로드해주세요.")
+    # 분석 시작 버튼 (파일 업로드 바로 아래)
+    if st.button("🚀 분석 시작", type="primary", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.retriever = None
+        
+        if uploaded_files:
+            with st.spinner("📄 파일을 분석하고 있습니다..."):
+                st.session_state.retriever = process_source("Files", uploaded_files)
+        elif url_input:
+            with st.spinner("🌐 URL을 분석하고 있습니다..."):
+                st.session_state.retriever = process_source("URL", url_input)
+        else:
+            st.warning("⚠️ 분석할 URL을 입력하거나 파일을 업로드해주세요.")
 
-    if st.session_state.retriever:
-        st.success("✅ 분석이 완료되었습니다! 이제 질문해보세요.")
+        if st.session_state.retriever:
+            st.success("✅ 분석이 완료되었습니다! 이제 질문해보세요.")
+    
+    st.divider()
+    
+    # 사용 팁
+    st.subheader("💡 사용 팁")
+    st.info("""
+    **효과적인 질문 방법:**
+    - 구체적이고 명확한 질문을 하세요
+    - "어디에 나와 있나요?" 같은 출처 확인 질문도 유용합니다
+    - 여러 관점에서 질문해보세요
+    
+    **예시 질문:**
+    - "주요 내용을 요약해주세요"
+    - "핵심 포인트는 무엇인가요?"
+    - "이 문서의 결론은 무엇인가요?"
+    """)
+    
+    # 사이드바 맨 아래에 대화 초기화 버튼
+    st.markdown("---")
+    if st.button("🔄 대화 초기화", type="secondary", use_container_width=True):
+        # 세션 상태 초기화
+        for key in list(st.session_state.keys()):
+            if key not in ['system_prompt']:  # 시스템 프롬프트는 유지
+                del st.session_state[key]
+        
+        # 기본값으로 재설정
+        st.session_state["messages"] = []
+        st.session_state.retriever = None
+        
+        st.success("🔄 대화가 초기화되었습니다!")
+        st.rerun()
+
+# 메인 채팅 인터페이스
+st.subheader("💬 채팅")
+
+# 이전 메시지 표시
+for message in st.session_state["messages"]:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if "sources" in message and message["sources"]:
+            display_sources(message["sources"])
+
+# 사용자 입력
+user_input = st.chat_input("문서에 대해 궁금한 내용을 물어보세요! 🤔")
+
+if user_input:
+    # 사용자 메시지 추가
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    st.chat_message("user").write(user_input)
+    
+    try:
+        # 채팅 히스토리 생성
+        chat_history = rag_pipeline.format_chat_history(st.session_state.messages)
+        
+        if st.session_state.retriever:
+            # RAG 체인 사용
+            chain = rag_pipeline.create_conversational_rag_chain(
+                st.session_state.retriever, 
+                st.session_state.system_prompt
+            )
+            
+            with st.chat_message("assistant"):
+                container = st.empty()
+                ai_answer = ""
+                source_documents = []
+                
+                # 스트리밍 응답
+                for chunk in chain.stream({
+                    "input": user_input, 
+                    "chat_history": chat_history
+                }):
+                    if "answer" in chunk:
+                        ai_answer += chunk["answer"]
+                        container.markdown(ai_answer)
+                    if "context" in chunk and not source_documents:
+                        source_documents = chunk["context"]
+                
+                # 메시지 저장
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": ai_answer, 
+                    "sources": source_documents
+                })
+                
+                # 출처 표시
+                display_sources(source_documents)
+        else:
+            # 기본 체인 사용
+            chain = rag_pipeline.create_default_chain(st.session_state.system_prompt)
+            
+            with st.chat_message("assistant"):
+                container = st.empty()
+                ai_answer = ""
+                
+                for token in chain.stream({
+                    "question": user_input, 
+                    "chat_history": chat_history
+                }):
+                    ai_answer += token
+                    container.markdown(ai_answer)
+                
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": ai_answer, 
+                    "sources": []
+                })
+    
+    except Exception as e:
+        st.chat_message("assistant").error(f"❌ 답변 생성 중 오류가 발생했습니다.\n\n오류: {e}")
+        st.session_state.messages.pop()  # 오류 발생 시 마지막 메시지 제거
+
+# 푸터
+st.markdown("---")
+st.markdown(
+    """
+    <div style='text-align: center; color: #666;'>
+        🤖 RAG Chatbot - 정확한 출처 기반 답변 제공
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
