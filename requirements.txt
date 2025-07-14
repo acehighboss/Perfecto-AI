@@ -3,6 +3,7 @@ langchain
 langchain-core
 langchain-community
 langchain-google-genai
+langchain-experimental
 langchain-text-splitters
 llama-parse
 faiss-cpu
