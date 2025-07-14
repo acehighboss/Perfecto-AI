@@ -1,54 +1,64 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 
-# [추가] 압축 검색에 필요한 모듈 import
-from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import LLMChainExtractor
+# 이 파일만 수정하면 됩니다.
 
 def get_conversational_rag_chain(vector_store, system_prompt: str):
     """
-    고급 압축 검색(Contextual Compression Retriever)을 포함한 대화 체인을 생성합니다.
+    대화 내역과 질문 재작성을 모두 고려하는 가장 진보된 RAG 체인을 생성합니다.
     """
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
 
-    # 1. 기본 Retriever 설정: 더 많은 후보군(k=10)을 가져오도록 설정
-    base_retriever = vector_store.as_retriever(search_kwargs={"k": 10})
+    # 1. Retriever 생성 (main.py에서 k=5로 설정된 retriever를 그대로 사용)
+    retriever = vector_store.as_retriever(search_kwargs={"k": 5})
 
-    # 2. Compressor 설정: LLM을 사용하여 관련성 높은 문장만 추출
-    compressor = LLMChainExtractor.from_llm(llm)
-
-    # 3. 압축 검색기(Compression Retriever) 생성
-    #    - 1차로 base_retriever가 문서를 가져오면,
-    #    - 2차로 compressor가 관련성 높은 내용만 압축/필터링합니다.
-    compression_retriever = ContextualCompressionRetriever(
-        base_compressor=compressor,
-        base_retriever=base_retriever
+    # 2. "질문 재작성"을 위한 프롬프트와 체인 생성
+    #    - 대화의 맥락을 보고, 후속 질문을 독립적인 검색 쿼리로 재작성합니다.
+    contextualize_q_system_prompt = (
+        "Given a chat history and the latest user question "
+        "which might reference context in the chat history, "
+        "formulate a standalone question which can be understood "
+        "without the chat history. Do NOT answer the question, "
+        "just reformulate it if needed and otherwise return it as is."
+    )
+    contextualize_q_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", contextualize_q_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
+    history_aware_retriever = create_history_aware_retriever(
+        llm, retriever, contextualize_q_prompt
     )
 
-    # 4. RAG 프롬프트 설정 (기존과 동일)
+    # 3. 재작성된 질문을 바탕으로 문서를 검색한 후, 원래 질문과 함께 답변을 생성하는 체인
+    #    - 여기서 system_prompt (페르소나)가 사용됩니다.
     template = f"""{system_prompt}
 
-Answer the user's question based on the context provided below and the conversation history.
-The context may include text and tables in markdown format. You must be able to understand and answer based on them.
-If you don't know the answer, just say that you don't know. Don't make up an answer.
+    Answer the user's question based on the context provided below and the conversation history.
+    The context may include text and tables in markdown format. You must be able to understand and answer based on them.
+    If you don't know the answer, just say that you don't know. Don't make up an answer.
 
-Context:
-{{context}}
-"""
-    rag_prompt = ChatPromptTemplate.from_messages(
+    Context:
+    {{context}}
+    """
+    qa_prompt = ChatPromptTemplate.from_messages(
         [
             ("system", template),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("user", "{input}"),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
         ]
     )
 
-    # 5. 최종 체인 생성 (Retriever를 compression_retriever로 교체)
-    document_chain = create_stuff_documents_chain(llm, rag_prompt)
-    return create_retrieval_chain(compression_retriever, document_chain)
+    # 4. 문서들을 하나의 컨텍스트로 결합하는 체인
+    Youtube_chain = create_stuff_documents_chain(llm, qa_prompt)
+
+    # 5. history_aware_retriever와 Youtube_chain을 결합한 최종 RAG 체인
+    return create_retrieval_chain(history_aware_retriever, Youtube_chain)
 
 
 def get_default_chain(system_prompt: str):
