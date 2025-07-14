@@ -9,5 +9,5 @@ llama-parse
 faiss-cpu
 PyPDF2
 python-docx
-openpyx1
+openpyxl
 pandas
