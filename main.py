@@ -5,11 +5,11 @@ import time
 
 # 페이지 설정
 st.set_page_config(page_title="RAG Chatbot", page_icon="🤖", layout="wide")
-st.title("🤖 RAG 챗봇")
+st.title("🤖 RAG 챗봇 - 향상된 검색 성능")
 st.markdown(
     """
     **정확한 출처 기반 답변을 제공하는 RAG 챗봇입니다.**
-    문서나 URL을 업로드하고 관련 질문을 하면 출처와 함께 정확한 답변을 받을 수 있습니다.
+    **하이브리드 검색 (BM25 + 벡터)**으로 더 정확한 정보 검색이 가능합니다.
     """
 )
 
@@ -21,7 +21,7 @@ if "retriever" not in st.session_state:
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = """당신은 문서 분석 전문가 AI 어시스턴트입니다. 
 제공된 문서의 내용을 정확히 이해하고 사용자의 질문에 대해 출처를 명시하며 정확한 답변을 제공합니다.
-추측이나 가정 없이 오직 문서에 기반한 정보만을 제공합니다."""
+문서에 없는 정보라도 일반적인 지식으로 보충 설명할 수 있습니다."""
 
 # 핸들러 및 파이프라인 초기화
 @st.cache_resource
@@ -32,25 +32,49 @@ def initialize_components():
 
 file_handler, rag_pipeline = initialize_components()
 
-def process_source(source_type, source_input):
-    """소스 처리 및 검색기 생성 (진행 상황 표시)"""
+def process_source_with_progress(source_type, source_input):
+    """진행 상황을 표시하며 소스 처리"""
     documents = []
+    progress_placeholder = st.empty()
     
-    if source_type == "URL":
-        documents = file_handler.get_documents_from_url(source_input)
-    elif source_type == "Files":
-        # 파일 크기 확인
-        total_size = sum(file.size for file in source_input)
-        size_mb = total_size / (1024 * 1024)
+    try:
+        if source_type == "URL":
+            progress_placeholder.info("🌐 URL에서 콘텐츠를 가져오는 중...")
+            documents = file_handler.get_documents_from_url(source_input)
+            
+        elif source_type == "Files":
+            progress_placeholder.info("📄 파일을 읽는 중...")
+            
+            # 파일 크기 확인
+            total_size = sum(len(file.getvalue()) for file in source_input)
+            file_count = len(source_input)
+            
+            progress_placeholder.info(f"📊 {file_count}개 파일 (총 {total_size:,} bytes) 처리 중...")
+            
+            # LlamaParse 처리
+            progress_placeholder.warning("⏳ LlamaParse로 문서를 분석하는 중... (최대 2-3분 소요될 수 있습니다)")
+            documents = file_handler.get_documents_from_files(source_input)
         
-        if size_mb > 5:
-            st.info(f"파일 크기: {size_mb:.1f}MB - 처리 시간이 다소 걸릴 수 있습니다.")
+        if not documents:
+            progress_placeholder.error("❌ 문서를 추출하지 못했습니다.")
+            return None
         
-        documents = file_handler.get_documents_from_files(source_input)
-    
-    if documents:
-        return rag_pipeline.create_retriever(documents)
-    return None
+        progress_placeholder.info("🔍 하이브리드 검색기를 생성하는 중...")
+        retriever = rag_pipeline.create_retriever(documents)
+        
+        if retriever:
+            progress_placeholder.success("✅ 문서 분석 및 하이브리드 검색기 생성 완료!")
+            time.sleep(1)
+            progress_placeholder.empty()
+            return retriever
+        else:
+            progress_placeholder.error("❌ 검색기 생성에 실패했습니다.")
+            return None
+            
+    except Exception as e:
+        progress_placeholder.error(f"❌ 처리 중 오류 발생: {str(e)}")
+        st.error(f"상세 오류: {e}")
+        return None
 
 def display_sources(source_documents):
     """출처 표시"""
@@ -64,8 +88,8 @@ def display_sources(source_documents):
 
 # 사이드바 설정
 with st.sidebar:
-    st.header("⚙️ 설정")
-    
+    st.header("⚙️ 설정")    
+        
     # 시스템 프롬프트 설정
     st.subheader("🤖 시스템 프롬프트 설정")
     system_prompt_input = st.text_area(
@@ -101,92 +125,44 @@ with st.sidebar:
     
     # 파일 정보 표시
     if uploaded_files:
-        total_size = sum(file.size for file in uploaded_files)
-        size_mb = total_size / (1024 * 1024)
-        st.info(f"📁 {len(uploaded_files)}개 파일, 총 {size_mb:.1f}MB")
-        
-        if size_mb > 10:
-            st.warning("⚠️ 큰 파일입니다. 빠른 처리를 위해 기본 파서를 사용합니다.")
+        st.info(f"📁 업로드된 파일: {len(uploaded_files)}개")
+        for file in uploaded_files:
+            file_size = len(file.getvalue())
+            st.write(f"• {file.name} ({file_size:,} bytes)")
     
     # 분석 시작 버튼
     if st.button("🚀 분석 시작", type="primary", use_container_width=True):
+        # 기존 상태 초기화
         st.session_state.messages = []
         st.session_state.retriever = None
         
-        # 진행 상황 표시
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        try:
-            if uploaded_files:
-                status_text.text("📄 파일을 분석하고 있습니다...")
-                progress_bar.progress(25)
-                
-                st.session_state.retriever = process_source("Files", uploaded_files)
-                progress_bar.progress(100)
-                
-            elif url_input:
-                status_text.text("🌐 URL을 분석하고 있습니다...")
-                progress_bar.progress(25)
-                
-                st.session_state.retriever = process_source("URL", url_input)
-                progress_bar.progress(100)
-                
-            else:
-                st.warning("⚠️ 분석할 URL을 입력하거나 파일을 업로드해주세요.")
-                progress_bar.empty()
-                status_text.empty()
-                
-            if st.session_state.retriever:
-                status_text.text("✅ 분석이 완료되었습니다!")
-                time.sleep(1)
-                progress_bar.empty()
-                status_text.empty()
-                st.success("✅ 분석이 완료되었습니다! 이제 질문해보세요.")
-            else:
-                progress_bar.empty()
-                status_text.empty()
-                
-        except Exception as e:
-            progress_bar.empty()
-            status_text.empty()
-            st.error(f"분석 중 오류 발생: {e}")
+        if uploaded_files:
+            st.session_state.retriever = process_source_with_progress("Files", uploaded_files)
+        elif url_input:
+            st.session_state.retriever = process_source_with_progress("URL", url_input)
+        else:
+            st.warning("⚠️ 분석할 URL을 입력하거나 파일을 업로드해주세요.")
     
     st.divider()
     
-    # 성능 팁
-    st.subheader("⚡ 성능 팁")
-    st.info("""
-    **빠른 처리를 위한 팁:**
-    - 파일 크기는 10MB 이하 권장
-    - 텍스트 파일(.txt)이 가장 빠름
-    - 여러 파일보다 하나의 통합 파일 권장
-    - 큰 PDF는 처리 시간이 오래 걸림
-    """)
+    # 현재 상태 표시
+    st.subheader("📊 현재 상태")
+    if st.session_state.retriever:
+        st.success("✅ 하이브리드 검색기 준비 완료 - 질문을 시작하세요!")
+    else:
+        st.info("⏳ 문서를 업로드하고 분석을 시작하세요")
     
     st.divider()
-    
-    # 사용 팁
-    st.subheader("💡 사용 팁")
-    st.info("""
-    **효과적인 질문 방법:**
-    - 구체적이고 명확한 질문을 하세요
-    - "어디에 나와 있나요?" 같은 출처 확인 질문도 유용합니다
-    - 여러 관점에서 질문해보세요
-    
-    **예시 질문:**
-    - "주요 내용을 요약해주세요"
-    - "핵심 포인트는 무엇인가요?"
-    - "이 문서의 결론은 무엇인가요?"
-    """)
     
     # 사이드바 맨 아래에 대화 초기화 버튼
     st.markdown("---")
     if st.button("🔄 대화 초기화", type="secondary", use_container_width=True):
+        # 세션 상태 초기화
         for key in list(st.session_state.keys()):
-            if key not in ['system_prompt']:
+            if key not in ['system_prompt']:  # 시스템 프롬프트는 유지
                 del st.session_state[key]
         
+        # 기본값으로 재설정
         st.session_state["messages"] = []
         st.session_state.retriever = None
         
@@ -196,6 +172,10 @@ with st.sidebar:
 # 메인 채팅 인터페이스
 st.subheader("💬 채팅")
 
+# 분석 상태에 따른 안내 메시지
+if not st.session_state.retriever:
+    st.info("📋 먼저 왼쪽 사이드바에서 문서를 업로드하고 '분석 시작' 버튼을 클릭하세요.")
+
 # 이전 메시지 표시
 for message in st.session_state["messages"]:
     with st.chat_message(message["role"]):
@@ -204,7 +184,7 @@ for message in st.session_state["messages"]:
             display_sources(message["sources"])
 
 # 사용자 입력
-user_input = st.chat_input("문서에 대해 궁금한 내용을 물어보세요! 🤔")
+user_input = st.chat_input("문서에 대해 궁금한 내용을 물어보세요! 🤔", disabled=not st.session_state.retriever)
 
 if user_input:
     # 사용자 메시지 추가
@@ -238,6 +218,12 @@ if user_input:
                     if "context" in chunk and not source_documents:
                         source_documents = chunk["context"]
                 
+                # 검색 결과 정보 표시
+                if source_documents:
+                    st.info(f"🔍 하이브리드 검색으로 {len(source_documents)}개의 관련 문서를 찾았습니다.")
+                else:
+                    st.warning("⚠️ 관련 문서를 찾지 못했지만 일반 지식으로 답변했습니다.")
+                
                 # 메시지 저장
                 st.session_state.messages.append({
                     "role": "assistant", 
@@ -270,4 +256,4 @@ if user_input:
     
     except Exception as e:
         st.chat_message("assistant").error(f"❌ 답변 생성 중 오류가 발생했습니다.\n\n오류: {e}")
-        st.session_state.messages.pop()
+        st.session_state.messages.pop()  # 오류 발생 시 마지막 메시지 제거
