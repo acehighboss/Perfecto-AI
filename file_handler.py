@@ -109,67 +109,67 @@ class FileHandler:
             return []
 
     def get_documents_from_url(self, url):
-    """URL에서 문서 추출 - 오류 처리 강화"""
-    try:
-        # 필요한 라이브러리 확인
+        """URL에서 문서 추출 - 오류 처리 강화"""
         try:
-            import bs4
-            import requests
-        except ImportError as e:
-            st.error(f"필수 라이브러리 누락: {e}")
-            st.info("requirements.txt에 beautifulsoup4, requests를 추가해주세요.")
+            # 필요한 라이브러리 확인
+            try:
+                import bs4
+                import requests
+            except ImportError as e:
+                st.error(f"필수 라이브러리 누락: {e}")
+                st.info("requirements.txt에 beautifulsoup4, requests를 추가해주세요.")
+                return []
+        
+            # WebBaseLoader 사용
+            from langchain_community.document_loaders import WebBaseLoader
+        
+            # User-Agent 설정으로 차단 방지
+            loader = WebBaseLoader(
+                url,
+                header_template={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            )
+        
+            documents = loader.load()
+        
+            if not documents:
+                st.warning("URL에서 콘텐츠를 추출하지 못했습니다.")
+                return []
+        
+            st.success(f"URL에서 {len(documents)}개 문서를 성공적으로 로드했습니다.")
+            return documents
+        
+        except Exception as e:
+            st.error(f"URL 로딩 오류: {e}")
+        
+            # 대안 방법 제시
+            st.info("""
+            **대안 방법:**
+            1. 웹페이지 내용을 복사하여 텍스트 파일로 저장 후 업로드
+            2. 웹페이지를 PDF로 저장 후 업로드
+            3. 다른 URL 시도
+            """)
+            
             return []
-        
-        # WebBaseLoader 사용
-        from langchain_community.document_loaders import WebBaseLoader
-        
-        # User-Agent 설정으로 차단 방지
-        loader = WebBaseLoader(
-            url,
-            header_template={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        )
-        
-        documents = loader.load()
-        
-        if not documents:
-            st.warning("URL에서 콘텐츠를 추출하지 못했습니다.")
-            return []
-        
-        st.success(f"URL에서 {len(documents)}개 문서를 성공적으로 로드했습니다.")
-        return documents
-        
-    except Exception as e:
-        st.error(f"URL 로딩 오류: {e}")
-        
-        # 대안 방법 제시
-        st.info("""
-        **대안 방법:**
-        1. 웹페이지 내용을 복사하여 텍스트 파일로 저장 후 업로드
-        2. 웹페이지를 PDF로 저장 후 업로드
-        3. 다른 URL 시도
-        """)
-        
-        return []
 
     def get_namu_wiki_content(self, url):
-    """나무위키 전용 로더"""
-    try:
-        import requests
-        from bs4 import BeautifulSoup
+        """나무위키 전용 로더"""
+        try:
+            import requests
+            from bs4 import BeautifulSoup
         
-        # 나무위키 접근을 위한 헤더 설정
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
-        }
+            # 나무위키 접근을 위한 헤더 설정
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+            }
         
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
         
         soup = BeautifulSoup(response.content, 'html.parser')
         
@@ -182,8 +182,8 @@ class FileHandler:
             st.warning("나무위키 본문을 찾을 수 없습니다.")
             return []
             
-    except Exception as e:
-        st.error(f"나무위키 접근 오류: {e}")
-        return []
+        except Exception as e:
+            st.error(f"나무위키 접근 오류: {e}")
+            return []
 
 
