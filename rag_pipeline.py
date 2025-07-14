@@ -1,8 +1,7 @@
 import streamlit as st
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_upstage import UpstageEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -13,12 +12,14 @@ from langchain.retrievers.document_compressors import LLMChainExtractor
 
 class RAGPipeline:
     def __init__(self):
-        self.upstage_api_key = st.secrets["UPSTAGE_API_KEY"]
         self.google_api_key = st.secrets["GOOGLE_API_KEY"]
-        self.embeddings = UpstageEmbeddings(
-            api_key=self.upstage_api_key,
-            model="solar-embedding-1-large"
+        
+        # Google 무료 임베딩 모델 사용 (text-embedding-004)
+        self.embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/text-embedding-004",
+            google_api_key=self.google_api_key
         )
+        
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash", 
             temperature=0,
@@ -49,9 +50,9 @@ class RAGPipeline:
             st.warning("문서에서 내용을 추출하지 못했습니다.")
             return None
 
-        # 텍스트 분할 (토큰 제한 고려)
+        # 텍스트 분할 (Google 임베딩 모델에 최적화)
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=800,
+            chunk_size=1000,  # Google 모델에 적합한 크기
             chunk_overlap=100,
             separators=["\n\n", "\n", " ", ""]
         )
@@ -62,7 +63,7 @@ class RAGPipeline:
             st.warning("문서 분할에 실패했습니다.")
             return None
         
-        st.info(f"📊 분할 완료: {len(splits)}개 청크 생성")
+        st.info(f"📊 분할 완료: {len(splits)}개 청크 생성 (Google text-embedding-004 모델 사용)")
         
         # FAISS 벡터스토어 생성
         try:
@@ -80,7 +81,7 @@ class RAGPipeline:
             }
         )
         
-        # 압축 검색기 사용 (관련성 높은 정보만 추출)
+        # 압축 검색기 사용
         compressor = LLMChainExtractor.from_llm(self.llm)
         compression_retriever = ContextualCompressionRetriever(
             base_compressor=compressor,
