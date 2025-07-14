@@ -4,10 +4,11 @@ from rag_pipeline import RAGPipeline
 
 # 페이지 설정
 st.set_page_config(page_title="Universal Table RAG Chatbot", page_icon="📊", layout="wide")
-st.title("📊RAG 챗봇")
+st.title("📊 범용 표 분석 RAG 챗봇")
 st.markdown(
     """
-    **LlamaParser를 활용한 RAG 챗봇입니다.**
+    **모든 종류의 표와 데이터를 분석하는 범용 RAG 챗봇입니다.**
+    재무, 연구, 재고, 인사, 영업 등 다양한 도메인의 표 데이터를 정확하게 해석합니다.
     """
 )
 
@@ -17,9 +18,10 @@ if "messages" not in st.session_state:
 if "retriever" not in st.session_state:
     st.session_state.retriever = None
 if "system_prompt" not in st.session_state:
-    st.session_state.system_prompt = """당신은 문서 분석 전문가 AI 어시스턴트입니다. 
-주어진 문서의 텍스트, 테이블, 이미지 내용을 정확히 이해하고 상세하게 답변해주세요.
-답변할 때는 반드시 참조한 출처를 명시하고, 정확한 정보만을 제공해주세요."""
+    st.session_state.system_prompt = """당신은 범용 데이터 분석 전문가 AI 어시스턴트입니다. 
+모든 종류의 표, 차트, 데이터를 정확히 해석하고 분석할 수 있습니다.
+재무, 연구, 재고, 인사, 영업 등 다양한 도메인의 데이터를 다룰 수 있으며,
+사용자의 질문에 대해 정확하고 상세한 답변을 제공합니다."""
 if "document_type" not in st.session_state:
     st.session_state.document_type = "general"
 
@@ -141,6 +143,44 @@ with st.sidebar:
 
         if st.session_state.retriever:
             st.success("✅ 분석이 완료되었습니다! 이제 질문해보세요.")
+    
+    st.divider()
+    
+    # 질문 가이드
+    st.subheader("💡 효과적인 질문 방법")
+    
+    question_examples = {
+        "financial": [
+            "2024년 4분기 각 부문별 매출액을 표로 정리해줘",
+            "전년 대비 영업이익 증감률은?",
+            "부채비율이 가장 높은 분기는?"
+        ],
+        "research": [
+            "실험군별 평균값과 표준편차를 표로 보여줘",
+            "p-value가 0.05 미만인 항목들은?",
+            "가장 높은 상관관계를 보이는 변수는?"
+        ],
+        "inventory": [
+            "품목별 재고 수량과 금액을 정리해줘",
+            "재고 회전율이 가장 낮은 품목은?",
+            "월별 입고량 변화 추이는?"
+        ],
+        "hr": [
+            "부서별 평균 급여를 표로 보여줘",
+            "승진 대상자 명단과 평가 점수는?",
+            "연차 사용률이 가장 높은 부서는?"
+        ],
+        "sales": [
+            "지역별 매출 실적을 표로 정리해줘",
+            "목표 달성률이 가장 높은 제품은?",
+            "월별 신규 고객 수 변화는?"
+        ]
+    }
+    
+    if selected_type in question_examples:
+        st.write("**예시 질문:**")
+        for example in question_examples[selected_type]:
+            st.write(f"• {example}")
     
     st.divider()
     
