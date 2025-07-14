@@ -92,12 +92,18 @@ with st.sidebar:
     )
     
     # 분석 시작 버튼
-    if st.button("🚀 분석 시작", type="primary"):
-        st.session_state.messages = []
-        st.session_state.retriever = None
-        
-        if uploaded_files:
-            with st.spinner("📄 파일을 분석하고 있습니다..."):
-                st.session_state.retriever = process_source("Files", uploaded_files)
-        elif url_input:
-            with st.spinner("🌐 URL을 분석하고 있습니다..."):
+if st.button("🚀 분석 시작", type="primary"):
+    st.session_state.messages = []
+    st.session_state.retriever = None
+    
+    if uploaded_files:
+        with st.spinner("📄 파일을 분석하고 있습니다..."):
+            st.session_state.retriever = process_source("Files", uploaded_files)
+    elif url_input:
+        with st.spinner("🌐 URL을 분석하고 있습니다..."):
+            st.session_state.retriever = process_source("URL", url_input)
+    else:
+        st.warning("⚠️ 분석할 URL을 입력하거나 파일을 업로드해주세요.")
+
+    if st.session_state.retriever:
+        st.success("✅ 분석이 완료되었습니다! 이제 질문해보세요.")
