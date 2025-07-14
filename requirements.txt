@@ -3,15 +3,10 @@ langchain
 langchain-core
 langchain-community
 langchain-google-genai
-langchain-upstage
 langchain-text-splitters
 llama-parse
 faiss-cpu
 PyPDF2
 python-docx
-openpyxl
-pandas
-nltk
 bs4
 requests
-lxml
