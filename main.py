@@ -38,9 +38,21 @@ def process_source(source_type, source_input):
     elif source_type == "Files":
         documents = file_handler.get_documents_from_files(source_input)
     
+    # 문서 내용 확인 (디버깅용)
     if documents:
+        total_length = sum(len(doc.page_content) for doc in documents)
+        st.info(f"📄 추출된 문서: {len(documents)}개, 총 {total_length:,}자")
+        
+        # 첫 번째 문서의 일부 내용 표시 (확인용)
+        if documents[0].page_content:
+            preview = documents[0].page_content[:500] + "..." if len(documents[0].page_content) > 500 else documents[0].page_content
+            with st.expander("📋 추출된 내용 미리보기"):
+                st.text(preview)
+        
         return rag_pipeline.create_retriever(documents)
-    return None
+    else:
+        st.error("문서를 추출하지 못했습니다.")
+        return None
 
 def display_sources(source_documents):
     """출처 표시"""
@@ -96,7 +108,9 @@ with st.sidebar:
             st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
 
         if st.session_state.retriever:
-            st.success("분석이 완료되었습니다! 이제 질문해보세요.")
+            st.success("✅ 분석이 완료되었습니다! 이제 질문해보세요.")
+        else:
+            st.error("❌ 분석에 실패했습니다. 다시 시도해주세요.")
     
     st.divider()
     
@@ -148,6 +162,12 @@ if user_input:
                     if "context" in chunk and not source_documents:
                         source_documents = chunk["context"]
                 
+                # 디버깅: 검색된 문서 수 표시
+                if source_documents:
+                    st.info(f"🔍 {len(source_documents)}개의 관련 문서를 찾았습니다.")
+                else:
+                    st.warning("⚠️ 관련 문서를 찾지 못했습니다.")
+                
                 # 메시지 저장
                 st.session_state.messages.append({
                     "role": "assistant", 
@@ -159,6 +179,7 @@ if user_input:
                 display_sources(source_documents)
         else:
             # 기본 체인 사용
+            st.warning("⚠️ 분석된 문서가 없어 일반 모드로 답변합니다.")
             chain = rag_pipeline.create_default_chain(st.session_state.system_prompt)
             
             with st.chat_message("assistant"):
