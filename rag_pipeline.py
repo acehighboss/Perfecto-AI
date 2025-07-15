@@ -6,16 +6,17 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-# 키워드 검색을 위한 BM25Retriever와 두 검색 결과를 합치는 EnsembleRetriever를 import 합니다.
+# 키워드 검색, 앙상블, 재평가를 위한 도구들을 import 합니다.
 from langchain.retrievers import BM25Retriever, EnsembleRetriever
 from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import LLMChainExtractor
+# Cohere의 재평가 모델을 사용하기 위해 CohereRerank를 import 합니다.
+from langchain_cohere import CohereRerank
 from file_handler import get_documents_from_files
 
 def get_retriever_from_source(source_type, source_input):
     """
     URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여
-    정확도를 높인 EnsembleRetriever와 ContextualCompressionRetriever를 생성합니다.
+    정확도를 극대화한 재평가(Re-ranking) Retriever를 생성합니다.
     """
     documents = []
     if source_type == "URL":
@@ -33,26 +34,28 @@ def get_retriever_from_source(source_type, source_input):
     if not splits:
         return None
 
-    # --- 수정된 부분: EnsembleRetriever 적용 ---
+    # --- 수정된 부분: EnsembleRetriever와 CohereRerank를 결합하여 정확도 향상 ---
     
     # 1. 키워드 기반 검색기(BM25Retriever)를 초기화합니다.
     bm25_retriever = BM25Retriever.from_documents(splits)
-    bm25_retriever.k = 5
+    bm25_retriever.k = 10 # 후보군을 10개로 늘려 더 넓게 탐색
 
     # 2. 의미 기반 검색기(FAISS)를 초기화합니다.
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vectorstore = FAISS.from_documents(splits, embeddings)
-    faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
 
-    # 3. 두 검색기를 결합하는 앙상블 검색기를 생성합니다.
-    # 키워드 검색과 의미 검색에 동일한 가중치를 부여합니다.
+    # 3. 두 검색기를 결합하는 앙상블 검색기를 생성합니다. (1차 검색)
     ensemble_retriever = EnsembleRetriever(
         retrievers=[bm25_retriever, faiss_retriever], weights=[0.5, 0.5]
     )
 
-    # 4. 앙상블 검색 결과를 다시 한번 필터링하여 정확도를 높입니다.
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-    compressor = LLMChainExtractor.from_llm(llm)
+    # 4. Cohere 재평가 모델을 압축기로 사용하여 2차 필터링 및 재평가를 수행합니다.
+    # 이 압축기는 1차 검색된 문서들을 질문과의 관련도 순으로 다시 정렬하고 상위 N개만 남깁니다.
+    # Cohere API 키가 환경 변수(COHERE_API_KEY)에 설정되어 있어야 합니다.
+    compressor = CohereRerank(top_n=3) # 가장 관련성 높은 3개 문서만 선택
+    
+    # 5. 압축기와 앙상블 검색기를 결합한 최종 Retriever를 생성합니다.
     compression_retriever = ContextualCompressionRetriever(
         base_compressor=compressor, base_retriever=ensemble_retriever
     )
