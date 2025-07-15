@@ -14,7 +14,7 @@ class FileHandler:
         self.llama_api_key = st.secrets["LLAMA_CLOUD_API_KEY"]
     
     def read_pdf_file(self, file):
-        """PDF 파일 읽기"""
+        """PDF 파일 읽기 (빠른 대체 방법)"""
         try:
             pdf_reader = PyPDF2.PdfReader(BytesIO(file.read()))
             text = ""
@@ -40,30 +40,22 @@ class FileHandler:
     def read_txt_file(self, file):
         """TXT 파일 읽기"""
         try:
-            content = file.read()
-            if isinstance(content, bytes):
-                encodings = ['utf-8', 'cp949', 'euc-kr', 'latin-1']
-                for encoding in encodings:
-                    try:
-                        return content.decode(encoding)
-                    except UnicodeDecodeError:
-                        continue
-                return content.decode('utf-8', errors='ignore')
-            return content
+            return file.read().decode('utf-8')
         except Exception as e:
             st.error(f"TXT 파일 읽기 오류: {e}")
             return ""
 
     async def parse_with_llamaparse(self, uploaded_files):
-        """LlamaParse를 사용한 파일 파싱"""
+        """LlamaParse를 사용한 파일 파싱 (타임아웃 설정)"""
         parser = LlamaParse(
             api_key=self.llama_api_key,
             result_type="markdown",
-            verbose=False,
+            verbose=False,  # 로그 출력 최소화
         )
         
         parsed_data = []
         for file in uploaded_files:
+            # TXT 파일은 LlamaParse 사용하지 않고 직접 처리 (빠른 처리)
             if file.name.endswith('.txt'):
                 text = self.read_txt_file(file)
                 if text:
@@ -71,18 +63,17 @@ class FileHandler:
                         def __init__(self, text, metadata):
                             self.text = text
                             self.metadata = metadata
-                    parsed_data.append(TempDoc(text, {"source": file.name}))
+                    
+                    parsed_data.append(TempDoc(text, {"source": file.name, "type": "txt"}))
                 continue
             
+            # PDF, DOCX 파일 처리
             with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.name)[1]) as tmp_file:
                 tmp_file.write(file.getvalue())
                 tmp_file_path = tmp_file.name
             
             try:
-                documents = await parser.aload_data(tmp_file_path)
-                parsed_data.extend(documents)
-            except Exception as e:
-                st.warning(f"LlamaParse 실패 ({file.name}), 기본 파서 사용: {e}")
+                # 빠른 처리를 위해 간단한 파일은 기본 파서 사용
                 if file.name.endswith('.pdf'):
                     text = self.read_pdf_file(file)
                 elif file.name.endswith('.docx'):
@@ -95,7 +86,20 @@ class FileHandler:
                         def __init__(self, text, metadata):
                             self.text = text
                             self.metadata = metadata
-                    parsed_data.append(TempDoc(text, {"source": file.name}))
+                    
+                    parsed_data.append(TempDoc(text, {"source": file.name, "type": "basic"}))
+                else:
+                    # 기본 파서 실패 시에만 LlamaParse 사용
+                    documents = await parser.aload_data(tmp_file_path)
+                    for doc in documents:
+                        if hasattr(doc, 'metadata'):
+                            doc.metadata["type"] = "llamaparse"
+                        else:
+                            doc.metadata = {"source": file.name, "type": "llamaparse"}
+                    parsed_data.extend(documents)
+                    
+            except Exception as e:
+                st.error(f"파일 처리 중 오류 발생 ({file.name}): {e}")
             finally:
                 os.remove(tmp_file_path)
         
@@ -114,13 +118,16 @@ class FileHandler:
         )
         
         if llama_index_documents:
-            langchain_documents = [
-                LangChainDocument(
+            langchain_documents = []
+            for doc in llama_index_documents:
+                metadata = doc.metadata if hasattr(doc, 'metadata') else {"source": "unknown"}
+                
+                langchain_doc = LangChainDocument(
                     page_content=doc.text, 
-                    metadata=doc.metadata if hasattr(doc, 'metadata') else {"source": "unknown"}
+                    metadata=metadata
                 )
-                for doc in llama_index_documents
-            ]
+                langchain_documents.append(langchain_doc)
+            
             return langchain_documents
         return []
 
