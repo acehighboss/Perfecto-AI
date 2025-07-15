@@ -7,15 +7,14 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.retrievers import ContextualCompressionRetriever, EnsembleRetriever
+from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import LLMChainExtractor
-from langchain_community.retrievers import BM25Retriever
 
 class RAGPipeline:
     def __init__(self):
         self.google_api_key = st.secrets["GOOGLE_API_KEY"]
         
-        # Google 무료 임베딩 모델 사용 (text-embedding-004)
+        # Google 임베딩 모델
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model="models/text-embedding-004",
             google_api_key=self.google_api_key
@@ -28,17 +27,17 @@ class RAGPipeline:
         )
 
     def get_system_prompt_template(self, system_prompt):
-        """시스템 프롬프트 템플릿 - 외부 지식 활용 허용"""
+        """시스템 프롬프트 템플릿"""
         template = system_prompt + """
 
 다음 컨텍스트를 바탕으로 사용자의 질문에 정확하게 답변해주세요.
 
-**답변 지침:**
-1. 제공된 컨텍스트의 정보를 우선적으로 사용하여 답변하세요
-2. 컨텍스트에 관련 정보가 부족한 경우, 일반적인 지식을 활용하여 보충 설명하되 "(일반 지식 기반)"이라고 표시하세요
-3. 답변할 때는 참조한 출처를 명시해주세요
-4. 정확한 정보만을 제공하고, 추측이나 가정은 피하세요
-5. 가능한 한 구체적이고 상세한 답변을 제공하세요
+**중요한 답변 규칙:**
+1. 반드시 제공된 컨텍스트의 정보만을 사용하여 답변하세요
+2. 컨텍스트에서 관련 정보를 찾을 수 없다면 "제공된 문서에서 해당 정보를 찾을 수 없습니다"라고 명시하세요
+3. 절대로 일반 지식이나 외부 정보를 사용하지 마세요
+4. 답변할 때는 반드시 참조한 출처를 명시해주세요
+5. 추측이나 가정은 하지 마세요
 
 컨텍스트:
 {context}
@@ -46,16 +45,16 @@ class RAGPipeline:
         return template
 
     def create_retriever(self, documents):
-        """하이브리드 검색기 생성 (BM25 + 벡터 검색)"""
+        """문서에서 검색기 생성 - 검색 성능 개선"""
         if not documents:
             st.warning("문서에서 내용을 추출하지 못했습니다.")
             return None
 
-        # 텍스트 분할
+        # 더 작은 청크로 분할 (검색 정확도 향상)
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=800,
-            chunk_overlap=80,
-            separators=["\n\n", "\n", " ", ""]
+            chunk_size=500,  # 1000 → 500으로 감소
+            chunk_overlap=100,
+            separators=["\n\n", "\n", ".", " ", ""]
         )
         
         splits = text_splitter.split_documents(documents)
@@ -66,52 +65,22 @@ class RAGPipeline:
         
         st.info(f"📊 분할 완료: {len(splits)}개 청크 생성")
         
+        # FAISS 벡터스토어 생성
         try:
-            # 1. 벡터 검색기 생성 (의미적 유사도)
             vectorstore = FAISS.from_documents(splits, self.embeddings)
-            vector_retriever = vectorstore.as_retriever(
-                search_type="similarity", 
-                search_kwargs={
-                    "k": 10,  # 6 → 10으로 증가
-                    "score_threshold": 0.15  # 0.3 → 0.15로 감소 (더 관대하게)
-                }
-            )
-            
-            # 2. BM25 검색기 생성 (키워드 매칭)
-            bm25_retriever = BM25Retriever.from_documents(splits)
-            bm25_retriever.k = 8  # BM25로 8개 문서 검색
-            
-            # 3. 하이브리드 앙상블 검색기 생성
-            ensemble_retriever = EnsembleRetriever(
-                retrievers=[bm25_retriever, vector_retriever],
-                weights=[0.4, 0.6]  # BM25: 40%, 벡터: 60%
-            )
-            
-            st.success("🔍 하이브리드 검색기 (BM25 + 벡터) 생성 완료")
-            
-            # 4. 압축 검색기 적용 (선택적)
-            if len(splits) < 30:  # 작은 문서만 압축 검색 사용
-                compressor = LLMChainExtractor.from_llm(self.llm)
-                compression_retriever = ContextualCompressionRetriever(
-                    base_compressor=compressor,
-                    base_retriever=ensemble_retriever
-                )
-                return compression_retriever
-            else:
-                return ensemble_retriever
-                
         except Exception as e:
-            st.error(f"검색기 생성 오류: {e}")
-            # 오류 발생 시 기본 벡터 검색기만 사용
-            try:
-                vectorstore = FAISS.from_documents(splits, self.embeddings)
-                return vectorstore.as_retriever(
-                    search_type="similarity", 
-                    search_kwargs={"k": 10, "score_threshold": 0.15}
-                )
-            except Exception as e2:
-                st.error(f"기본 검색기 생성도 실패: {e2}")
-                return None
+            st.error(f"벡터스토어 생성 오류: {e}")
+            return None
+
+        # 검색 설정 대폭 완화
+        base_retriever = vectorstore.as_retriever(
+            search_type="similarity",  # 임계값 제거
+            search_kwargs={
+                "k": 15,  # 6 → 15로 증가 (더 많은 문서 검색)
+            }
+        )
+        
+        return base_retriever  # 압축 검색기 제거 (정보 손실 방지)
 
     def create_conversational_rag_chain(self, retriever, system_prompt):
         """대화형 RAG 체인 생성"""
@@ -129,7 +98,7 @@ class RAGPipeline:
     def create_default_chain(self, system_prompt):
         """기본 체인 생성"""
         prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
+            ("system", system_prompt + "\n\n중요: 문서가 제공되지 않았으므로 '문서를 먼저 업로드해주세요'라고 안내하세요."),
             MessagesPlaceholder(variable_name="chat_history"),
             ("user", "{question}"),
         ])
@@ -144,3 +113,17 @@ class RAGPipeline:
             else:
                 chat_history.append(AIMessage(content=msg["content"]))
         return chat_history
+
+    def debug_search_results(self, retriever, query):
+        """검색 결과 디버깅"""
+        try:
+            docs = retriever.get_relevant_documents(query)
+            st.write(f"🔍 검색된 문서 수: {len(docs)}")
+            
+            for i, doc in enumerate(docs[:3]):  # 상위 3개만 표시
+                st.write(f"**문서 {i+1}:**")
+                st.write(doc.page_content[:200] + "...")
+                st.write("---")
+                
+        except Exception as e:
+            st.error(f"검색 디버깅 오류: {e}")
