@@ -140,4 +140,6 @@ if user_input:
             )
     except Exception as e:
         # 오류 발생 시 사용자에게 메시지 표시
-        st.error(f"답변 생성 중 오류가 발생했습니다: {e}")
+        with st.chat_message("assistant"):
+            st.error(f"답변 생성 중 오류가 발생했습니다. 다시 시도해주세요. (오류: {e})")
+
