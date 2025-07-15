@@ -6,8 +6,8 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-# MultiQueryRetriever와 함께 압축 및 재평가를 위한 도구들을 import 합니다.
-from langchain.retrievers.multi_query import MultiQueryRetriever
+# 키워드 검색을 위한 BM25Retriever와 두 검색 결과를 합치는 EnsembleRetriever를 import 합니다.
+from langchain.retrievers import BM25Retriever, EnsembleRetriever
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import LLMChainExtractor
 from file_handler import get_documents_from_files
@@ -15,7 +15,7 @@ from file_handler import get_documents_from_files
 def get_retriever_from_source(source_type, source_input):
     """
     URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여
-    정확도를 높인 ContextualCompressionRetriever를 생성합니다.
+    정확도를 높인 EnsembleRetriever와 ContextualCompressionRetriever를 생성합니다.
     """
     documents = []
     if source_type == "URL":
@@ -30,27 +30,31 @@ def get_retriever_from_source(source_type, source_input):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     splits = text_splitter.split_documents(documents)
     
+    if not splits:
+        return None
+
+    # --- 수정된 부분: EnsembleRetriever 적용 ---
+    
+    # 1. 키워드 기반 검색기(BM25Retriever)를 초기화합니다.
+    bm25_retriever = BM25Retriever.from_documents(splits)
+    bm25_retriever.k = 5
+
+    # 2. 의미 기반 검색기(FAISS)를 초기화합니다.
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vectorstore = FAISS.from_documents(splits, embeddings)
-    
-    # --- 수정된 부분: ContextualCompressionRetriever 적용 ---
-    
-    # 1. 기본 Retriever를 생성합니다. (MultiQueryRetriever 사용)
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-    base_retriever = MultiQueryRetriever.from_llm(
-        retriever=vectorstore.as_retriever(search_kwargs={"k": 10}), # 후보군을 10개로 늘려 더 넓게 탐색
-        llm=llm
+    faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+
+    # 3. 두 검색기를 결합하는 앙상블 검색기를 생성합니다.
+    # 키워드 검색과 의미 검색에 동일한 가중치를 부여합니다.
+    ensemble_retriever = EnsembleRetriever(
+        retrievers=[bm25_retriever, faiss_retriever], weights=[0.5, 0.5]
     )
-    
-    # 2. 검색된 문서를 압축(재평가)할 LLM 기반 압축기를 생성합니다.
-    # 이 압축기는 문서에서 질문과 관련된 부분만 추출하는 역할을 합니다.
+
+    # 4. 앙상블 검색 결과를 다시 한번 필터링하여 정확도를 높입니다.
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
     compressor = LLMChainExtractor.from_llm(llm)
-    
-    # 3. 압축기를 사용하여 기본 Retriever를 감싸는 ContextualCompressionRetriever를 생성합니다.
-    # 이 Retriever는 1차 검색 후, 2차로 압축기가 관련성 높은 내용만 필터링합니다.
     compression_retriever = ContextualCompressionRetriever(
-        base_compressor=compressor, 
-        base_retriever=base_retriever
+        base_compressor=compressor, base_retriever=ensemble_retriever
     )
     
     return compression_retriever
