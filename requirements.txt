@@ -11,5 +11,3 @@ pypdf
 python-docx
 docx2txt
 rank_bm25
-langchain-cohere>=0.1.5
-cohere>=5.0.0
