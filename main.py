@@ -105,6 +105,7 @@ if user_input:
                 ai_answer = ""
                 source_documents = []
                 
+                # chain.stream을 사용하여 답변을 스트리밍으로 받아옵니다.
                 for chunk in chain.stream({"input": user_input}):
                     if "answer" in chunk:
                         ai_answer += chunk["answer"]
@@ -114,17 +115,19 @@ if user_input:
                 
                 container.markdown(ai_answer)
                 
+                # 답변과 함께 출처를 표시합니다.
                 if source_documents:
                     with st.expander("참고한 출처 보기"):
                         for i, source in enumerate(source_documents):
                             st.info(f"**출처 {i+1}**\n\n{source.page_content}")
                             st.divider()
                 
+                # 대화 기록에 답변과 출처를 함께 저장합니다.
                 st.session_state.messages.append(
                     {"role": "assistant", "content": ai_answer, "sources": source_documents}
                 )
 
-        else:
+        else: # RAG 기능이 비활성화된 경우
             chain = get_default_chain(current_system_prompt)
             
             with st.chat_message("assistant"):
@@ -139,6 +142,8 @@ if user_input:
                 {"role": "assistant", "content": ai_answer, "sources": []}
             )
     except Exception as e:
-        # 오류 발생 시 사용자에게 메시지 표시
+        # 오류 발생 시, 사용자에게 명확한 에러 메시지를 표시합니다.
         with st.chat_message("assistant"):
-            st.error(f"답변 생성 중 오류가 발생했습니다. 다시 시도해주세요. (오류: {e})")
+            error_message = f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요. (오류: {e})"
+            st.error(error_message)
+            st.session_state.messages.append({"role": "assistant", "content": error_message, "sources": []})
