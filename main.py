@@ -1,149 +1,198 @@
 import streamlit as st
-from dotenv import load_dotenv
-from rag_pipeline import get_retriever_from_source, get_conversational_rag_chain, get_default_chain
+from file_handler import FileHandler
+from rag_pipeline import RAGPipeline
 
-# API KEY 정보로드
-load_dotenv()
-
-# --- 페이지 설정 ---
-st.set_page_config(page_title="Modular RAG Chatbot", page_icon="🤖")
-st.title("🤖 모듈화된 RAG 챗봇")
-st.markdown(
-    """
-안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX, TXT)의 내용을 분석하고 답변합니다.
-왼쪽 사이드바에서 AI의 페르소나와 분석할 대상을 설정하고 '적용' 또는 '분석' 버튼을 눌러주세요.
-"""
+# 페이지 설정
+st.set_page_config(
+    page_title="RAG 챗봇",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# --- 세션 상태 초기화 ---
-if "messages" not in st.session_state:
-    st.session_state["messages"] = []
-if "retriever" not in st.session_state:
-    st.session_state.retriever = None
-if "system_prompt" not in st.session_state:
-    st.session_state.system_prompt = "당신은 친절한 AI 어시스턴트입니다. 사용자의 질문에 항상 친절하고 상세하게 답변해주세요."
+# 세션 상태 초기화
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+if 'rag_pipeline' not in st.session_state:
+    st.session_state.rag_pipeline = None
+if 'file_handler' not in st.session_state:
+    st.session_state.file_handler = None
+if 'documents_processed' not in st.session_state:
+    st.session_state.documents_processed = False
+if 'system_prompt' not in st.session_state:
+    st.session_state.system_prompt = "당신은 도움이 되는 AI 어시스턴트입니다."
 
-# --- 사이드바 UI ---
-with st.sidebar:
-    st.header("⚙️ 설정")
-    st.divider()
-    
-    with st.form("persona_form"):
-        st.subheader("🤖 AI 페르소나 설정")
-        system_prompt_input = st.text_area(
-            "AI의 역할을 설정해주세요.",
-            value=st.session_state.system_prompt,
-            height=150
-        )
-        if st.form_submit_button("페르소나 적용"):
-            st.session_state.system_prompt = system_prompt_input
-            st.success("페르소나가 적용되었습니다!")
-
-    st.divider()
-    
-    with st.form("source_form"):
-        st.subheader("🔎 분석 대상 설정")
-        url_input = st.text_input("웹사이트 URL", placeholder="https://example.com")
-        uploaded_files = st.file_uploader(
-            "파일 업로드 (PDF, DOCX, TXT)",
-            type=["pdf", "docx", "txt"],
-            accept_multiple_files=True
-        )
-
-        if st.form_submit_button("분석 시작"):
-            source_type = None
-            source_input = None
-            if uploaded_files:
-                source_type = "Files"
-                source_input = uploaded_files
-            elif url_input:
-                source_type = "URL"
-                source_input = url_input
-            else:
-                st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
-
-            if source_type:
-                with st.spinner("분석 중입니다..."):
-                    st.session_state.retriever = get_retriever_from_source(source_type, source_input)
-                
-                if st.session_state.retriever:
-                    st.success("분석이 완료되었습니다! 이제 질문해보세요.")
-                else:
-                    st.error("분석에 실패했습니다. URL이나 파일 상태를 확인해주세요.")
-
-    st.divider()
-    if st.button("대화 초기화"):
-        st.session_state.clear()
-        st.rerun()
-
-# --- 메인 채팅 화면 ---
-# 이전 대화 기록 출력
-for message in st.session_state["messages"]:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-        if "sources" in message and message["sources"]:
-            with st.expander("참고한 출처 보기"):
-                for i, source in enumerate(message["sources"]):
-                    st.info(f"**출처 {i+1}**\n\n{source.page_content}")
-                    st.divider()
-
-# 사용자의 입력
-user_input = st.chat_input("궁금한 내용을 물어보세요!")
-
-if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    st.chat_message("user").write(user_input)
-
-    current_system_prompt = st.session_state.system_prompt
-
+def initialize_components():
+    """컴포넌트 초기화"""
     try:
-        if st.session_state.retriever:
-            chain = get_conversational_rag_chain(st.session_state.retriever, current_system_prompt)
-            
-            with st.chat_message("assistant"):
-                container = st.empty()
-                ai_answer = ""
-                source_documents = []
-                
-                # chain.stream을 사용하여 답변을 스트리밍으로 받아옵니다.
-                for chunk in chain.stream({"input": user_input}):
-                    if "answer" in chunk:
-                        ai_answer += chunk["answer"]
-                        container.markdown(ai_answer + "▌")
-                    if "context" in chunk:
-                        source_documents = chunk["context"]
-                
-                container.markdown(ai_answer)
-                
-                # 답변과 함께 출처를 표시합니다.
-                if source_documents:
-                    with st.expander("참고한 출처 보기"):
-                        for i, source in enumerate(source_documents):
-                            st.info(f"**출처 {i+1}**\n\n{source.page_content}")
-                            st.divider()
-                
-                # 대화 기록에 답변과 출처를 함께 저장합니다.
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": ai_answer, "sources": source_documents}
-                )
+        google_api_key = st.secrets["GOOGLE_API_KEY"]
+        llama_api_key = st.secrets["LLAMA_API_KEY"]
+    except KeyError as e:
+        st.error(f"Streamlit secrets에서 {e} 키를 찾을 수 없습니다. secrets.toml 파일을 확인해주세요.")
+        st.stop()
+    
+    if st.session_state.rag_pipeline is None:
+        st.session_state.rag_pipeline = RAGPipeline(google_api_key)
+    
+    if st.session_state.file_handler is None:
+        st.session_state.file_handler = FileHandler(llama_api_key)
 
-        else: # RAG 기능이 비활성화된 경우
-            chain = get_default_chain(current_system_prompt)
+def main():
+    st.title("🤖 RAG 챗봇")
+    st.markdown("문서를 업로드하고 질문해보세요!")
+    
+    # 컴포넌트 초기화
+    initialize_components()
+    
+    # 사이드바
+    with st.sidebar:
+        st.header("⚙️ 설정")
+        
+        # 1. 시스템 프롬프트 설정
+        st.subheader("🎭 페르소나 설정")
+        new_system_prompt = st.text_area(
+            "시스템 프롬프트를 입력하세요:",
+            value=st.session_state.system_prompt,
+            height=100,
+            help="챗봇의 성격과 답변 스타일을 설정할 수 있습니다."
+        )
+        
+        if st.button("프롬프트 적용", type="primary"):
+            st.session_state.system_prompt = new_system_prompt
+            st.success("프롬프트가 적용되었습니다!")
+        
+        st.divider()
+        
+        # 2. 파일 업로드 섹션
+        st.subheader("📁 문서 업로드")
+        
+        # URL 입력
+        url_input = st.text_input("URL 입력:", placeholder="https://example.com")
+        
+        # 파일 업로드
+        uploaded_files = st.file_uploader(
+            "파일 업로드:",
+            type=['pdf', 'docx', 'doc', 'txt'],
+            accept_multiple_files=True,
+            help="PDF, Word, 텍스트 파일을 업로드할 수 있습니다."
+        )
+        
+        # 3. 분석 시작 버튼
+        if st.button("📊 분석 시작", type="primary"):
+            if not url_input and not uploaded_files:
+                st.warning("URL 또는 파일을 입력해주세요.")
+            else:
+                process_documents(url_input, uploaded_files)
+        
+        # 4. 분석 상태 표시
+        st.subheader("📈 분석 상태")
+        doc_count = st.session_state.rag_pipeline.get_document_count() if st.session_state.rag_pipeline else 0
+        
+        if doc_count > 0:
+            st.success(f"✅ 분석 완료 ({doc_count}개 청크)")
+            st.session_state.documents_processed = True
+        else:
+            st.info("⏳ 문서를 업로드하고 분석을 시작해주세요.")
+            st.session_state.documents_processed = False
+        
+        st.divider()
+        
+        # 5. 초기화 버튼
+        st.subheader("🔄 초기화")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("대화 초기화", help="채팅 기록을 삭제합니다"):
+                st.session_state.messages = []
+                st.rerun()
+        
+        with col2:
+            if st.button("전체 초기화", help="모든 데이터를 삭제합니다"):
+                st.session_state.messages = []
+                if st.session_state.rag_pipeline:
+                    st.session_state.rag_pipeline.clear_database()
+                st.session_state.documents_processed = False
+                st.rerun()
+    
+    # 메인 채팅 영역
+    chat_container = st.container()
+    
+    with chat_container:
+        # 채팅 기록 표시
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+        
+        # 사용자 입력
+        if prompt := st.chat_input("질문을 입력하세요..."):
+            if not st.session_state.documents_processed:
+                st.warning("먼저 문서를 업로드하고 분석을 완료해주세요.")
+                return
             
+            # 사용자 메시지 추가
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            
+            # AI 응답 생성
             with st.chat_message("assistant"):
-                container = st.empty()
-                ai_answer = ""
-                for token in chain.stream({"question": user_input}):
-                    ai_answer += token
-                    container.markdown(ai_answer + "▌")
-                container.markdown(ai_answer)
-            
-            st.session_state.messages.append(
-                {"role": "assistant", "content": ai_answer, "sources": []}
-            )
-    except Exception as e:
-        # 오류 발생 시, 사용자에게 명확한 에러 메시지를 표시합니다.
-        with st.chat_message("assistant"):
-            error_message = f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요. (오류: {e})"
-            st.error(error_message)
-            st.session_state.messages.append({"role": "assistant", "content": error_message, "sources": []})
+                with st.spinner("답변을 생성하고 있습니다..."):
+                    # 유사 문서 검색
+                    similar_docs = st.session_state.rag_pipeline.search_similar_documents(prompt)
+                    
+                    if similar_docs:
+                        # 답변 생성
+                        response = st.session_state.rag_pipeline.generate_answer(
+                            prompt, 
+                            similar_docs, 
+                            st.session_state.system_prompt
+                        )
+                        st.markdown(response)
+                        
+                        # 참고 문서 표시
+                        with st.expander("📚 참고한 문서들"):
+                            for i, doc in enumerate(similar_docs, 1):
+                                st.markdown(f"**[출처 {i}]** {doc['source']}")
+                                st.markdown(f"```\n{doc['content'][:300]}...\n```")
+                                st.markdown(f"*유사도: {doc['similarity']:.3f}*")
+                                st.divider()
+                    else:
+                        response = "죄송합니다. 업로드된 문서에서 관련 정보를 찾을 수 없습니다."
+                        st.markdown(response)
+                
+                # 응답을 세션에 저장
+                st.session_state.messages.append({"role": "assistant", "content": response})
+
+def process_documents(url_input, uploaded_files):
+    """문서 처리 함수"""
+    with st.spinner("문서를 분석하고 있습니다..."):
+        success_count = 0
+        total_count = 0
+        
+        # URL 처리
+        if url_input:
+            total_count += 1
+            text = st.session_state.file_handler.extract_text_from_url(url_input)
+            if text:
+                chunks = st.session_state.file_handler.chunk_text(text)
+                if st.session_state.rag_pipeline.add_documents(chunks, f"URL: {url_input}"):
+                    success_count += 1
+        
+        # 파일 처리
+        if uploaded_files:
+            for uploaded_file in uploaded_files:
+                total_count += 1
+                text = st.session_state.file_handler.process_file(uploaded_file)
+                if text:
+                    chunks = st.session_state.file_handler.chunk_text(text)
+                    if st.session_state.rag_pipeline.add_documents(chunks, f"파일: {uploaded_file.name}"):
+                        success_count += 1
+        
+        if success_count > 0:
+            st.success(f"✅ {success_count}/{total_count}개 문서가 성공적으로 처리되었습니다!")
+            st.session_state.documents_processed = True
+        else:
+            st.error("❌ 문서 처리에 실패했습니다.")
+
+if __name__ == "__main__":
+    main()
