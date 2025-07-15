@@ -7,6 +7,8 @@ from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.retrievers import BM25Retriever, EnsembleRetriever
+# LlamaParse의 Document와 LangChain의 Document 형식이 다르므로, 변환을 위해 import 합니다.
+from langchain_core.documents import Document as LangChainDocument
 from file_handler import get_documents_from_files
 
 def get_retriever_from_source(source_type, source_input):
@@ -27,12 +29,17 @@ def get_retriever_from_source(source_type, source_input):
             return None
     elif source_type == "Files":
         # LlamaParse를 통해 구조화된 문서를 가져옵니다.
-        documents = get_documents_from_files(source_input)
+        llama_documents = get_documents_from_files(source_input)
+        if not llama_documents:
+            return None
+        # LlamaParse의 Document 객체를 LangChain의 Document 객체로 변환합니다.
+        # 이 부분이 오류를 해결하는 핵심 코드입니다.
+        documents = [LangChainDocument(page_content=doc.text, metadata=doc.metadata) for doc in llama_documents]
 
     if not documents:
         return None
 
-    # LlamaParse가 이미 문서를 잘 구조화했지만, 일관된 처리를 위해 한 번 더 분할합니다.
+    # 이제 documents는 LangChain의 표준 Document 객체 리스트이므로, 다음 코드는 정상 작동합니다.
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=200)
     splits = text_splitter.split_documents(documents)
     
