@@ -96,44 +96,48 @@ if user_input:
 
     current_system_prompt = st.session_state.system_prompt
 
-    if st.session_state.retriever:
-        chain = get_conversational_rag_chain(st.session_state.retriever, current_system_prompt)
-        
-        with st.chat_message("assistant"):
-            container = st.empty()
-            ai_answer = ""
-            source_documents = []
+    try:
+        if st.session_state.retriever:
+            chain = get_conversational_rag_chain(st.session_state.retriever, current_system_prompt)
             
-            for chunk in chain.stream({"input": user_input}):
-                if "answer" in chunk:
-                    ai_answer += chunk["answer"]
+            with st.chat_message("assistant"):
+                container = st.empty()
+                ai_answer = ""
+                source_documents = []
+                
+                for chunk in chain.stream({"input": user_input}):
+                    if "answer" in chunk:
+                        ai_answer += chunk["answer"]
+                        container.markdown(ai_answer + "▌")
+                    if "context" in chunk:
+                        source_documents = chunk["context"]
+                
+                container.markdown(ai_answer)
+                
+                if source_documents:
+                    with st.expander("참고한 출처 보기"):
+                        for i, source in enumerate(source_documents):
+                            st.info(f"**출처 {i+1}**\n\n{source.page_content}")
+                            st.divider()
+                
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": ai_answer, "sources": source_documents}
+                )
+
+        else:
+            chain = get_default_chain(current_system_prompt)
+            
+            with st.chat_message("assistant"):
+                container = st.empty()
+                ai_answer = ""
+                for token in chain.stream({"question": user_input}):
+                    ai_answer += token
                     container.markdown(ai_answer + "▌")
-                if "context" in chunk:
-                    source_documents = chunk["context"]
-            
-            container.markdown(ai_answer)
-            
-            if source_documents:
-                with st.expander("참고한 출처 보기"):
-                    for i, source in enumerate(source_documents):
-                        st.info(f"**출처 {i+1}**\n\n{source.page_content}")
-                        st.divider()
+                container.markdown(ai_answer)
             
             st.session_state.messages.append(
-                {"role": "assistant", "content": ai_answer, "sources": source_documents}
+                {"role": "assistant", "content": ai_answer, "sources": []}
             )
-
-    else:
-        chain = get_default_chain(current_system_prompt)
-        
-        with st.chat_message("assistant"):
-            container = st.empty()
-            ai_answer = ""
-            for token in chain.stream({"question": user_input}):
-                ai_answer += token
-                container.markdown(ai_answer + "▌")
-            container.markdown(ai_answer)
-        
-        st.session_state.messages.append(
-            {"role": "assistant", "content": ai_answer, "sources": []}
-        )
+    except Exception as e:
+        # 오류 발생 시 사용자에게 메시지 표시
+        st.error(f"답변 생성 중 오류가 발생했습니다: {e}")
