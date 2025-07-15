@@ -1,116 +1,105 @@
-import google.generativeai as genai
-import faiss
-import numpy as np
-import pickle
 import os
+import pickle
 from typing import List, Dict, Any, Optional
 import streamlit as st
 
+# LangChain imports
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+from langchain.chains import RetrievalQA
+from langchain_core.retrievers import BaseRetriever
+
 class RAGPipeline:
     def __init__(self, google_api_key: str):
-        # Google AI 설정
-        genai.configure(api_key=google_api_key)
-        self.embedding_model = genai.GenerativeModel('models/embedding-004')
-        self.llm_model = genai.GenerativeModel('gemini-1.5-flash')
+        # Google AI 모델 초기화
+        self.embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-004",
+            google_api_key=google_api_key
+        )
         
-        # FAISS 설정
-        self.dimension = 768  # embedding-004의 차원
-        self.index = None
-        self.documents = []  # 문서 텍스트 저장
-        self.metadatas = []  # 메타데이터 저장
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",
+            google_api_key=google_api_key,
+            temperature=0.1,
+            convert_system_message_to_human=True
+        )
         
-        # 저장된 인덱스 로드 시도
-        self.load_index()
+        # 벡터스토어 초기화
+        self.vectorstore = None
+        self.retriever = None
+        
+        # 저장된 벡터스토어 로드 시도
+        self.load_vectorstore()
     
-    def get_embedding(self, text: str) -> Optional[np.ndarray]:
-        """텍스트의 임베딩 벡터 생성"""
+    def create_vectorstore(self, documents: List[Document]) -> bool:
+        """문서들로부터 벡터스토어 생성"""
         try:
-            result = genai.embed_content(
-                model="models/embedding-004",
-                content=text,
-                task_type="retrieval_document"
+            if not documents:
+                st.error("처리할 문서가 없습니다.")
+                return False
+            
+            # 진행률 표시
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            status_text.text("벡터스토어 생성 중...")
+            
+            if self.vectorstore is None:
+                # 새 벡터스토어 생성
+                self.vectorstore = FAISS.from_documents(
+                    documents=documents,
+                    embedding=self.embeddings
+                )
+            else:
+                # 기존 벡터스토어에 문서 추가
+                self.vectorstore.add_documents(documents)
+            
+            progress_bar.progress(0.8)
+            
+            # 리트리버 설정
+            self.retriever = self.vectorstore.as_retriever(
+                search_type="similarity",
+                search_kwargs={"k": 5}
             )
-            return np.array(result['embedding'], dtype=np.float32)
-        except Exception as e:
-            st.error(f"임베딩 생성 중 오류: {str(e)}")
-            return None
-    
-    def initialize_index(self):
-        """FAISS 인덱스 초기화"""
-        self.index = faiss.IndexFlatIP(self.dimension)  # Inner Product (코사인 유사도)
-        self.documents = []
-        self.metadatas = []
-    
-    def add_documents(self, chunks: List[str], source: str) -> bool:
-        """문서 청크들을 FAISS 인덱스에 추가"""
-        try:
-            if self.index is None:
-                self.initialize_index()
             
-            embeddings = []
-            valid_chunks = []
-            valid_metadatas = []
+            progress_bar.progress(1.0)
             
-            for i, chunk in enumerate(chunks):
-                if chunk.strip():
-                    embedding = self.get_embedding(chunk)
-                    if embedding is not None:
-                        # L2 정규화 (코사인 유사도를 위해)
-                        embedding = embedding / np.linalg.norm(embedding)
-                        embeddings.append(embedding)
-                        valid_chunks.append(chunk)
-                        valid_metadatas.append({
-                            "source": source, 
-                            "chunk_id": len(self.documents) + len(valid_chunks) - 1
-                        })
+            # 벡터스토어 저장
+            self.save_vectorstore()
             
-            if embeddings:
-                # FAISS 인덱스에 추가
-                embeddings_array = np.vstack(embeddings)
-                self.index.add(embeddings_array)
-                
-                # 문서와 메타데이터 저장
-                self.documents.extend(valid_chunks)
-                self.metadatas.extend(valid_metadatas)
-                
-                # 인덱스 저장
-                self.save_index()
-                return True
+            # 진행률 표시 제거
+            progress_bar.empty()
+            status_text.empty()
             
-            return False
+            return True
             
         except Exception as e:
-            st.error(f"문서 추가 중 오류: {str(e)}")
+            st.error(f"벡터스토어 생성 중 오류: {str(e)}")
             return False
     
-    def search_similar_documents(self, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
+    def search_similar_documents(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
         """쿼리와 유사한 문서 검색"""
         try:
-            if self.index is None or self.index.ntotal == 0:
+            if self.retriever is None:
                 return []
             
-            query_embedding = self.get_embedding(query)
-            if query_embedding is None:
-                return []
+            # 문서 검색
+            docs = self.retriever.get_relevant_documents(query)
             
-            # L2 정규화
-            query_embedding = query_embedding / np.linalg.norm(query_embedding)
-            query_embedding = query_embedding.reshape(1, -1)
+            # 결과 포맷팅
+            results = []
+            for doc in docs[:k]:
+                results.append({
+                    'content': doc.page_content,
+                    'source': doc.metadata.get('source', 'Unknown'),
+                    'metadata': doc.metadata
+                })
             
-            # FAISS 검색
-            k = min(n_results, self.index.ntotal)
-            scores, indices = self.index.search(query_embedding, k)
-            
-            similar_docs = []
-            for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
-                if idx < len(self.documents):
-                    similar_docs.append({
-                        'content': self.documents[idx],
-                        'source': self.metadatas[idx]['source'],
-                        'similarity': float(score)  # 코사인 유사도 점수
-                    })
-            
-            return similar_docs
+            return results
             
         except Exception as e:
             st.error(f"문서 검색 중 오류: {str(e)}")
@@ -121,96 +110,144 @@ class RAGPipeline:
         try:
             # 컨텍스트 구성
             context = ""
-            sources = []
-            
             for i, doc in enumerate(context_docs, 1):
-                context += f"\n[출처 {i}] {doc['source']}\n{doc['content']}\n"
-                sources.append(doc['source'])
+                source = doc.get('source', 'Unknown')
+                content = doc.get('content', '')
+                context += f"\n[출처 {i}] {source}\n{content}\n"
             
-            # 프롬프트 구성
-            base_prompt = f"""
-당신은 업로드된 문서들을 바탕으로 질문에 답변하는 AI 어시스턴트입니다.
+            # 프롬프트 템플릿 생성
+            prompt_template = ChatPromptTemplate.from_messages([
+                ("system", f"""당신은 업로드된 문서들을 바탕으로 질문에 답변하는 AI 어시스턴트입니다.
 
 {system_prompt}
-
-다음 컨텍스트를 바탕으로 질문에 답변해주세요:
-
-컨텍스트:
-{context}
-
-질문: {query}
 
 답변 시 다음 규칙을 따라주세요:
 1. 제공된 컨텍스트만을 바탕으로 답변하세요
 2. 답변 끝에 참고한 출처를 명시하세요
 3. 컨텍스트에서 답을 찾을 수 없다면 "제공된 문서에서 관련 정보를 찾을 수 없습니다"라고 답변하세요
 4. 한국어로 자연스럽고 정확하게 답변하세요
+5. 구체적이고 상세한 답변을 제공하세요"""),
+                ("human", f"""다음 컨텍스트를 바탕으로 질문에 답변해주세요:
 
-답변:
-"""
+컨텍스트:
+{context}
+
+질문: {query}
+
+답변:""")
+            ])
             
-            response = self.llm_model.generate_content(base_prompt)
-            return response.text
+            # 체인 생성 및 실행
+            chain = prompt_template | self.llm | StrOutputParser()
+            response = chain.invoke({})
+            
+            return response
             
         except Exception as e:
             st.error(f"답변 생성 중 오류: {str(e)}")
             return "답변 생성 중 오류가 발생했습니다."
     
-    def save_index(self):
-        """FAISS 인덱스와 메타데이터 저장"""
-        try:
-            if self.index is not None:
-                # FAISS 인덱스 저장
-                faiss.write_index(self.index, "faiss_index.bin")
-                
-                # 문서와 메타데이터 저장
-                with open("documents_metadata.pkl", "wb") as f:
-                    pickle.dump({
-                        'documents': self.documents,
-                        'metadatas': self.metadatas
-                    }, f)
-        except Exception as e:
-            st.error(f"인덱스 저장 중 오류: {str(e)}")
+    def create_rag_chain(self, system_prompt: str = ""):
+        """RAG 체인 생성"""
+        if self.retriever is None:
+            return None
+        
+        # 프롬프트 템플릿
+        prompt_template = ChatPromptTemplate.from_messages([
+            ("system", f"""당신은 업로드된 문서들을 바탕으로 질문에 답변하는 AI 어시스턴트입니다.
+
+{system_prompt}
+
+답변 시 다음 규칙을 따라주세요:
+1. 제공된 컨텍스트만을 바탕으로 답변하세요
+2. 답변 끝에 참고한 출처를 명시하세요
+3. 컨텍스트에서 답을 찾을 수 없다면 "제공된 문서에서 관련 정보를 찾을 수 없습니다"라고 답변하세요
+4. 한국어로 자연스럽고 정확하게 답변하세요"""),
+            ("human", """컨텍스트: {context}
+
+질문: {question}
+
+답변:""")
+        ])
+        
+        # RAG 체인 구성
+        def format_docs(docs):
+            formatted = ""
+            for i, doc in enumerate(docs, 1):
+                source = doc.metadata.get('source', 'Unknown')
+                formatted += f"\n[출처 {i}] {source}\n{doc.page_content}\n"
+            return formatted
+        
+        rag_chain = (
+            {"context": self.retriever | format_docs, "question": RunnablePassthrough()}
+            | prompt_template
+            | self.llm
+            | StrOutputParser()
+        )
+        
+        return rag_chain
     
-    def load_index(self):
-        """저장된 FAISS 인덱스와 메타데이터 로드"""
+    def save_vectorstore(self):
+        """벡터스토어 저장"""
         try:
-            if os.path.exists("faiss_index.bin") and os.path.exists("documents_metadata.pkl"):
-                # FAISS 인덱스 로드
-                self.index = faiss.read_index("faiss_index.bin")
-                
-                # 문서와 메타데이터 로드
-                with open("documents_metadata.pkl", "rb") as f:
-                    data = pickle.load(f)
-                    self.documents = data['documents']
-                    self.metadatas = data['metadatas']
-            else:
-                self.initialize_index()
+            if self.vectorstore is not None:
+                self.vectorstore.save_local("faiss_vectorstore")
         except Exception as e:
-            st.error(f"인덱스 로드 중 오류: {str(e)}")
-            self.initialize_index()
+            st.error(f"벡터스토어 저장 중 오류: {str(e)}")
     
-    def clear_database(self):
-        """데이터베이스 초기화"""
+    def load_vectorstore(self):
+        """저장된 벡터스토어 로드"""
+        try:
+            if os.path.exists("faiss_vectorstore"):
+                self.vectorstore = FAISS.load_local(
+                    "faiss_vectorstore", 
+                    self.embeddings,
+                    allow_dangerous_deserialization=True
+                )
+                self.retriever = self.vectorstore.as_retriever(
+                    search_type="similarity",
+                    search_kwargs={"k": 5}
+                )
+        except Exception as e:
+            st.warning(f"기존 벡터스토어 로드 실패, 새로 생성합니다: {str(e)}")
+            self.vectorstore = None
+            self.retriever = None
+    
+    def clear_vectorstore(self):
+        """벡터스토어 초기화"""
         try:
             # 파일 삭제
-            if os.path.exists("faiss_index.bin"):
-                os.remove("faiss_index.bin")
-            if os.path.exists("documents_metadata.pkl"):
-                os.remove("documents_metadata.pkl")
+            import shutil
+            if os.path.exists("faiss_vectorstore"):
+                shutil.rmtree("faiss_vectorstore")
             
-            # 인덱스 초기화
-            self.initialize_index()
+            # 객체 초기화
+            self.vectorstore = None
+            self.retriever = None
+            
             return True
         except Exception as e:
-            st.error(f"데이터베이스 초기화 중 오류: {str(e)}")
+            st.error(f"벡터스토어 초기화 중 오류: {str(e)}")
             return False
     
     def get_document_count(self) -> int:
         """저장된 문서 수 반환"""
         try:
-            if self.index is not None:
-                return self.index.ntotal
+            if self.vectorstore is not None:
+                return self.vectorstore.index.ntotal
             return 0
         except:
             return 0
+    
+    def get_vectorstore_info(self) -> Dict[str, Any]:
+        """벡터스토어 정보 반환"""
+        if self.vectorstore is None:
+            return {"document_count": 0, "index_size": 0}
+        
+        try:
+            return {
+                "document_count": self.vectorstore.index.ntotal,
+                "index_size": self.vectorstore.index.d
+            }
+        except:
+            return {"document_count": 0, "index_size": 0}
