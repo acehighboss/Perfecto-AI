@@ -1,6 +1,7 @@
 import os
 import tempfile
-from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
+# PDF 처리 성능을 높이기 위해 PyPDFium2Loader를 사용합니다.
+from langchain_community.document_loaders import PyPDFium2Loader, Docx2txtLoader, TextLoader
 
 def get_documents_from_files(uploaded_files):
     """
@@ -18,7 +19,8 @@ def get_documents_from_files(uploaded_files):
             loader = None
             # 파일 확장자에 따라 적절한 로더 선택
             if uploaded_file.name.endswith(".pdf"):
-                loader = PyPDFLoader(tmp_file_path)
+                # PDF 로더를 PyPDFium2Loader로 변경하여 정확도 향상
+                loader = PyPDFium2Loader(tmp_file_path)
             elif uploaded_file.name.endswith(".docx"):
                 loader = Docx2txtLoader(tmp_file_path)
             elif uploaded_file.name.endswith(".txt"):
