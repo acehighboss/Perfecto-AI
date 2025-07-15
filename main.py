@@ -1,17 +1,15 @@
+# main.py
 import streamlit as st
-from dotenv import load_dotenv
+# API 키는 Streamlit의 secrets에서 자동으로 로드됩니다. .env 파일이나 load_dotenv()는 필요 없습니다.
 from rag_pipeline import get_retriever_from_source, get_conversational_rag_chain, get_default_chain
-
-# API KEY 정보로드
-load_dotenv()
 
 # --- 페이지 설정 ---
 st.set_page_config(page_title="LlamaParse RAG Chatbot", page_icon="🦙")
-st.title("🦙 LlamaParse 기반 RAG 챗봇")
+st.title("🦙 LlamaParse & Rerank RAG 챗봇")
 st.markdown(
     """
-안녕하세요! 이 챗봇은 **LlamaParse**를 사용하여 PDF, DOCX 등 복잡한 문서의 **텍스트, 표, 이미지**까지 분석하고 답변합니다.
-"""
+    안녕하세요! 이 챗봇은 **LlamaParse**로 문서를 분석하고, **Cohere Rerank**로 답변의 정확도를 높였습니다.
+    """
 )
 
 # --- 세션 상태 초기화 ---
@@ -25,7 +23,7 @@ if "system_prompt" not in st.session_state:
 # --- 사이드바 UI ---
 with st.sidebar:
     st.header("⚙️ 설정")
-    st.info("LlamaParse를 사용하려면 `.env` 파일에 `LLAMA_CLOUD_API_KEY`를 설정해야 합니다.")
+    st.info("LLAMA_CLOUD_API_KEY, GOOGLE_API_KEY, COHERE_API_KEY를 Streamlit secrets에 설정해야 합니다.")
     st.divider()
     
     with st.form("persona_form"):
@@ -50,25 +48,19 @@ with st.sidebar:
         )
 
         if st.form_submit_button("분석 시작"):
-            source_type = None
-            source_input = None
-            if uploaded_files:
-                source_type = "Files"
-                source_input = uploaded_files
-            elif url_input:
-                source_type = "URL"
-                source_input = url_input
-            else:
-                st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
+            source_type = "Files" if uploaded_files else "URL" if url_input else None
+            source_input = uploaded_files or url_input
 
             if source_type:
-                with st.spinner("LlamaParse로 문서를 분석 중입니다..."):
+                with st.spinner("LlamaParse로 문서를 분석하고 Rerank 모델을 준비 중입니다..."):
                     st.session_state.retriever = get_retriever_from_source(source_type, source_input)
                 
                 if st.session_state.retriever:
                     st.success("분석이 완료되었습니다! 이제 질문해보세요.")
                 else:
-                    st.error("분석에 실패했습니다. API 키나 파일 상태를 확인해주세요.")
+                    st.error("분석에 실패했습니다. API 키나 파일/URL 상태를 확인해주세요.")
+            else:
+                st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
 
     st.divider()
     if st.button("대화 초기화"):
@@ -83,66 +75,50 @@ for message in st.session_state["messages"]:
         if "sources" in message and message["sources"]:
             with st.expander("참고한 출처 보기"):
                 for i, source in enumerate(message["sources"]):
-                    st.info(f"**출처 {i+1}**\n\n{source.page_content}")
+                    # Reranker가 추가한 관련성 점수(relevance_score)를 함께 표시
+                    relevance_score = source.metadata.get('relevance_score', 'N/A')
+                    st.info(f"**출처 {i+1}** (관련성: {relevance_score:.2f})\n\n{source.page_content}")
                     st.divider()
 
 # 사용자의 입력
-user_input = st.chat_input("궁금한 내용을 물어보세요!")
-
-if user_input:
+if user_input := st.chat_input("궁금한 내용을 물어보세요!"):
     st.session_state.messages.append({"role": "user", "content": user_input})
-    st.chat_message("user").write(user_input)
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
     current_system_prompt = st.session_state.system_prompt
 
     try:
-        if st.session_state.retriever:
-            chain = get_conversational_rag_chain(st.session_state.retriever, current_system_prompt)
-            
-            with st.chat_message("assistant"):
-                container = st.empty()
-                ai_answer = ""
-                source_documents = []
+        with st.chat_message("assistant"):
+            if st.session_state.retriever:
+                chain = get_conversational_rag_chain(st.session_state.retriever, current_system_prompt)
                 
-                # chain.stream을 사용하여 답변을 스트리밍으로 받아옵니다.
-                for chunk in chain.stream({"input": user_input}):
-                    if "answer" in chunk:
-                        ai_answer += chunk["answer"]
-                        container.markdown(ai_answer + "▌")
-                    if "context" in chunk:
-                        source_documents = chunk["context"]
+                # Reranker 사용 시 스트리밍 대신 invoke 사용
+                response = chain.invoke({"input": user_input})
+                ai_answer = response.get("answer", "답변을 생성하지 못했습니다.")
+                source_documents = response.get("context", [])
                 
-                container.markdown(ai_answer)
+                st.markdown(ai_answer)
                 
-                # 답변과 함께 출처를 표시합니다.
+                # 답변과 함께 출처를 표시
                 if source_documents:
                     with st.expander("참고한 출처 보기"):
                         for i, source in enumerate(source_documents):
-                            st.info(f"**출처 {i+1}**\n\n{source.page_content}")
+                            relevance_score = source.metadata.get('relevance_score', 'N/A')
+                            st.info(f"**출처 {i+1}** (관련성: {relevance_score:.2f})\n\n{source.page_content}")
                             st.divider()
                 
-                # 대화 기록에 답변과 출처를 함께 저장합니다.
                 st.session_state.messages.append(
                     {"role": "assistant", "content": ai_answer, "sources": source_documents}
                 )
 
-        else: # RAG 기능이 비활성화된 경우
-            chain = get_default_chain(current_system_prompt)
-            
-            with st.chat_message("assistant"):
-                container = st.empty()
-                ai_answer = ""
-                for token in chain.stream({"question": user_input}):
-                    ai_answer += token
-                    container.markdown(ai_answer + "▌")
-                container.markdown(ai_answer)
-            
-            st.session_state.messages.append(
-                {"role": "assistant", "content": ai_answer, "sources": []}
-            )
+            else: # RAG 기능이 비활성화된 경우
+                chain = get_default_chain(current_system_prompt)
+                ai_answer = st.write_stream(chain.stream({"question": user_input}))
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": ai_answer, "sources": []}
+                )
     except Exception as e:
-        # 오류 발생 시, 사용자에게 명확한 에러 메시지를 표시합니다.
-        with st.chat_message("assistant"):
-            error_message = f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요. (오류: {e})"
-            st.error(error_message)
-            st.session_state.messages.append({"role": "assistant", "content": error_message, "sources": []})
+        error_message = f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요. (오류: {e})"
+        st.error(error_message)
+        st.session_state.messages.append({"role": "assistant", "content": error_message, "sources": []})
