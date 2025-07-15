@@ -7,7 +7,7 @@ langchain-cohere
 beautifulsoup4
 faiss-cpu
 python-dotenv
-pypdf
+pypdfium2
 python-docx
 docx2txt
 rank_bm25
