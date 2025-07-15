@@ -1,5 +1,4 @@
 # rag_pipeline.py
-
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
@@ -11,24 +10,16 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.retrievers import BM25Retriever, EnsembleRetriever, ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import CohereRerank
 from langchain_core.documents import Document as LangChainDocument
-# --- 질의 확장을 위한 Import ---
-from langchain_core.runnables import RunnablePassthrough
-# ------------------------------------
+from langchain_core.runnables import RunnableLambda
+
 from file_handler import get_documents_from_files
 
-# get_retriever_from_source 함수는 이전과 동일하게 유지합니다.
+# get_retriever_from_source 함수는 변경 없이 그대로 사용합니다.
 def get_retriever_from_source(source_type, source_input):
-    """
-    URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여
-    Cohere Rerank가 적용된 ContextualCompressionRetriever를 생성합니다.
-    """
     documents = []
     if source_type == "URL":
         try:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-            }
-            loader = WebBaseLoader(source_input, header_template=headers)
+            loader = WebBaseLoader(source_input)
             documents = loader.load()
         except Exception as e:
             print(f"Error loading URL: {e}")
@@ -66,42 +57,47 @@ def get_retriever_from_source(source_type, source_input):
     
     return compression_retriever
 
-# --- 이 함수를 수정합니다 ---
+
 def get_conversational_rag_chain(retriever, system_prompt):
     """
-    '질의 확장'을 포함하여 RAG 기능을 수행하는 체인을 생성합니다.
+    '역할 부여 및 사고 과정(Chain-of-Thought)' 프롬프트를 사용하여
+    질의 재작성 기능이 포함된 RAG 체인을 생성합니다.
     """
-    # 1. 질의 확장을 위한 프롬프트 정의
-    query_expansion_template = """You are an AI assistant. Your task is to rephrase a user's question into a more detailed and specific search query for a vector database, based on the context of an AI industry report.
-The expanded query should include related concepts, synonyms, and potential specific examples to improve document retrieval.
-
-Original question:
-{question}
-
-Based on this question, generate a single, more descriptive search query in Korean.
-Expanded Search Query:"""
-    query_expansion_prompt = ChatPromptTemplate.from_template(query_expansion_template)
-    
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
 
-    # 2. 질의 확장 체인 생성
-    query_rewriter_chain = query_expansion_prompt | llm | StrOutputParser()
+    # 1. 일반화된 질의 재작성 프롬프트 (Zero-shot Chain-of-Thought)
+    query_rewrite_template = """You are an expert at rewriting user questions into effective search queries for a vector database.
+Your goal is to transform a user's question into a query that is rich with keywords and semantic details, based on the context of an AI industry trend report.
+The rewritten query must be in Korean.
 
-    # 3. 확장된 질의를 사용하여 문서를 검색하는 체인 생성
-    #    사용자의 원본 질문(input)을 rewriter에 전달하여 확장된 검색어를 얻고, 그것으로 retriever를 호출합니다.
-    context_retrieval_chain = (lambda x: x["input"]) | query_rewriter_chain | retriever
+Follow these steps:
+1.  **Analyze Intent**: Understand the core information the user is seeking.
+2.  **Identify Key Concepts**: Extract main topics and entities (e.g., companies, technologies, people, countries).
+3.  **Expand and Specify**: Brainstorm related, more specific terms.
+    - If the user asks about a country's AI (e.g., "AI from China"), expand to major tech companies from that country (e.g., "Alibaba", "Tencent", "Baidu") and specific technologies (e.g., "LLM", "Tongyi Qianwen").
+    - If the user asks about a concept (e.g., "AI safety"), expand to related terms (e.g., "AI alignment", "red-teaming", "AI ethics").
+4.  **Construct a Descriptive Query**: Combine the original and expanded concepts into a single, comprehensive search query.
+
+Original question: {question}
+Rewritten Search Query:"""
+    query_rewrite_prompt = ChatPromptTemplate.from_template(query_rewrite_template)
     
-    # 4. 답변 생성을 위한 프롬프트 정의
-    template = f"""{system_prompt}
+    # 2. 질의 재작성 체인
+    query_rewriter = query_rewrite_prompt | llm | StrOutputParser()
+
+    # 3. 질의 재작성 로직을 포함하는 '스마트 리트리버' 생성
+    def rewrite_and_retrieve(query: str):
+        print(f"Original Query: {query}")
+        rewritten_query = query_rewriter.invoke({"question": query})
+        print(f"Rewritten Query: {rewritten_query}")  # 디버깅을 위해 재작성된 쿼리 출력
+        return retriever.invoke(rewritten_query)
+
+    smart_retriever = RunnableLambda(rewrite_and_retrieve)
+
+    # 4. 답변 생성을 위한 프롬프트
+    rag_prompt_template = f"""{system_prompt}
 
 Answer the user's request based on the provided "Context".
-The "Context" is a collection of text snippets from a document or a URL.
-
-**Instructions:**
-1. First, carefully read the user's request and the provided "Context".
-2. Find the answer within the "Context" and provide a clear, concise response based ONLY on this information.
-3. Prioritize and cite only the most relevant sources that directly support your answer.
-4. If the "Context" does not contain relevant information to fulfill the user's request, you must respond with: "죄송합니다. 제공된 내용만으로는 요청하신 작업을 수행할 수 없습니다."
 
 **Context:**
 {{context}}
@@ -109,39 +105,18 @@ The "Context" is a collection of text snippets from a document or a URL.
 **User's Request:**
 {{input}}
 """
-    rag_prompt = ChatPromptTemplate.from_template(template)
+    rag_prompt = ChatPromptTemplate.from_template(rag_prompt_template)
     
-    # 5. 최종 RAG 체인 조립
-    # RunnablePassthrough.assign을 사용하여 context를 동적으로 할당합니다.
-    final_rag_chain = (
-        RunnablePassthrough.assign(context=context_retrieval_chain)
-        | rag_prompt
-        | llm
-        | StrOutputParser()
-    )
-
-    # create_retrieval_chain은 내부적으로 위와 유사한 로직을 수행합니다.
-    # 질의 확장을 추가하기 위해 수동으로 체인을 조립하고, 답변 형식의 일관성을 위해 create_retrieval_chain과 유사하게 반환값을 구성합니다.
-    # 다만, create_stuff_documents_chain의 반환 형식이 딕셔너리이므로 최종 체인의 출력은 StrOutputParser()로 문자열 답변만 반환하도록 합니다.
-    # main.py에서 response['answer']가 아닌 response 자체를 사용하도록 조정이 필요합니다.
+    # 5. 문서를 결합하여 답변을 생성하는 체인
+    document_chain = create_stuff_documents_chain(llm, rag_prompt)
     
-    # 더 나은 반환 구조를 위해 create_retrieval_chain을 재구성
-    response_chain = create_stuff_documents_chain(llm, rag_prompt)
+    # 6. 표준 create_retrieval_chain을 사용하여 최종 체인 생성
+    retrieval_chain = create_retrieval_chain(smart_retriever, document_chain)
     
-    final_chain = RunnablePassthrough.assign(
-        context=context_retrieval_chain,
-    ).assign(
-        answer=response_chain
-    )
-    
-    return final_chain
+    return retrieval_chain
 
 
-# get_default_chain 함수는 이전과 동일하게 유지합니다.
 def get_default_chain(system_prompt):
-    """
-    기본적인 대화형 체인을 생성합니다.
-    """
     prompt = ChatPromptTemplate.from_messages(
         [("system", system_prompt), ("user", "{question}")]
     )
