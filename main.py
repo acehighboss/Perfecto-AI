@@ -5,11 +5,11 @@ import time
 
 # 페이지 설정
 st.set_page_config(page_title="RAG Chatbot", page_icon="🤖", layout="wide")
-st.title("🤖 RAG 챗봇 - 향상된 검색 성능")
+st.title("🤖 지능형 문단/문장 분할 RAG 챗봇")
 st.markdown(
     """
     **정확한 출처 기반 답변을 제공하는 RAG 챗봇입니다.**
-    **하이브리드 검색 (BM25 + 벡터)**으로 더 정확한 정보 검색이 가능합니다.
+    **문단 우선 분할**, **토큰 제한 고려**, **유사도 기반 출처 표시**로 더 정확한 답변을 제공합니다.
     """
 )
 
@@ -33,7 +33,7 @@ def initialize_components():
 file_handler, rag_pipeline = initialize_components()
 
 def process_source_with_progress(source_type, source_input):
-    """진행 상황을 표시하며 소스 처리"""
+    """진행 상황을 표시하며 소스 처리 - 미리보기 제거"""
     documents = []
     progress_placeholder = st.empty()
     
@@ -52,18 +52,22 @@ def process_source_with_progress(source_type, source_input):
             progress_placeholder.info(f"📊 {file_count}개 파일 (총 {total_size:,} bytes) 처리 중...")
             
             # LlamaParse 처리
-            progress_placeholder.warning("⏳ LlamaParse로 문서를 분석하는 중... (최대 2-3분 소요될 수 있습니다)")
+            progress_placeholder.warning("⏳ LlamaParse로 문서를 분석하는 중...")
             documents = file_handler.get_documents_from_files(source_input)
         
         if not documents:
             progress_placeholder.error("❌ 문서를 추출하지 못했습니다.")
             return None
         
-        progress_placeholder.info("🔍 하이브리드 검색기를 생성하는 중...")
+        # 문서 정보만 간단히 표시 (미리보기 제거)
+        total_length = sum(len(doc.page_content) for doc in documents)
+        st.info(f"📄 추출된 문서: {len(documents)}개, 총 {total_length:,}자")
+        
+        progress_placeholder.info("🔍 지능형 문단/문장 분할 검색기를 생성하는 중...")
         retriever = rag_pipeline.create_retriever(documents)
         
         if retriever:
-            progress_placeholder.success("✅ 문서 분석 및 하이브리드 검색기 생성 완료!")
+            progress_placeholder.success("✅ 문서 분석 및 지능형 검색기 생성 완료!")
             time.sleep(1)
             progress_placeholder.empty()
             return retriever
@@ -73,23 +77,46 @@ def process_source_with_progress(source_type, source_input):
             
     except Exception as e:
         progress_placeholder.error(f"❌ 처리 중 오류 발생: {str(e)}")
-        st.error(f"상세 오류: {e}")
         return None
 
-def display_sources(source_documents):
-    """출처 표시"""
+def display_smart_sources(source_documents):
+    """유사도 기반 출처 표시 - 청크 타입과 토큰 수 정보 포함"""
     if source_documents:
-        with st.expander("📚 참고 출처 보기"):
+        with st.expander("📚 유사도 기반 참고 출처"):
             for i, source in enumerate(source_documents):
-                st.text(f"--- 출처 {i+1} ---")
-                st.markdown(source.page_content)
-                if hasattr(source, 'metadata') and source.metadata:
-                    st.json(source.metadata)
+                # 메타데이터 정보
+                chunk_type = source.metadata.get('chunk_type', 'unknown')
+                chunk_index = source.metadata.get('chunk_index', 'unknown')
+                token_count = source.metadata.get('token_count', 0)
+                source_file = source.metadata.get('source', 'unknown')
+                
+                st.text(f"--- 출처 {i+1} ({chunk_type}, 토큰: {token_count}) ---")
+                st.caption(f"📁 {source_file} - 청크 인덱스: {chunk_index}")
+                
+                # 내용 표시 (너무 길면 축약)
+                content = source.page_content
+                if len(content) > 500:
+                    content = content[:500] + "..."
+                
+                st.markdown(content)
+                st.divider()
 
 # 사이드바 설정
 with st.sidebar:
-    st.header("⚙️ 설정")    
-        
+    st.header("⚙️ 설정")
+    
+    # 지능형 분할 정보
+    st.subheader("🧠 지능형 문서 분할")
+    st.success("""
+    **문단 우선 분할:**
+    - 문단별 분할 우선 적용
+    - 토큰 제한 초과 시 문장별 분할
+    - 오버랩으로 맥락 보존
+    - 유사도 기반 출처 표시
+    """)
+    
+    st.divider()
+    
     # 시스템 프롬프트 설정
     st.subheader("🤖 시스템 프롬프트 설정")
     system_prompt_input = st.text_area(
@@ -132,7 +159,6 @@ with st.sidebar:
     
     # 분석 시작 버튼
     if st.button("🚀 분석 시작", type="primary", use_container_width=True):
-        # 기존 상태 초기화
         st.session_state.messages = []
         st.session_state.retriever = None
         
@@ -148,21 +174,34 @@ with st.sidebar:
     # 현재 상태 표시
     st.subheader("📊 현재 상태")
     if st.session_state.retriever:
-        st.success("✅ 하이브리드 검색기 준비 완료 - 질문을 시작하세요!")
+        st.success("✅ 지능형 검색기 준비 완료!")
     else:
         st.info("⏳ 문서를 업로드하고 분석을 시작하세요")
     
     st.divider()
     
-    # 사이드바 맨 아래에 대화 초기화 버튼
+    # 사용 팁
+    st.subheader("💡 지능형 분할 장점")
+    st.info("""
+    **개선된 분할 방식:**
+    - 문단 구조 보존으로 맥락 유지
+    - 토큰 제한 고려한 자동 분할
+    - 문장별 오버랩으로 연결성 보장
+    - 청크 타입별 최적화된 검색
+    
+    **출처 표시 개선:**
+    - 유사도 기반 정확한 출처
+    - 청크 타입과 토큰 수 정보
+    - 문서 위치 정보 제공
+    """)
+    
+    # 대화 초기화 버튼
     st.markdown("---")
     if st.button("🔄 대화 초기화", type="secondary", use_container_width=True):
-        # 세션 상태 초기화
         for key in list(st.session_state.keys()):
-            if key not in ['system_prompt']:  # 시스템 프롬프트는 유지
+            if key not in ['system_prompt']:
                 del st.session_state[key]
         
-        # 기본값으로 재설정
         st.session_state["messages"] = []
         st.session_state.retriever = None
         
@@ -181,22 +220,19 @@ for message in st.session_state["messages"]:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         if "sources" in message and message["sources"]:
-            display_sources(message["sources"])
+            display_smart_sources(message["sources"])
 
 # 사용자 입력
 user_input = st.chat_input("문서에 대해 궁금한 내용을 물어보세요! 🤔", disabled=not st.session_state.retriever)
 
 if user_input:
-    # 사용자 메시지 추가
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.chat_message("user").write(user_input)
     
     try:
-        # 채팅 히스토리 생성
         chat_history = rag_pipeline.format_chat_history(st.session_state.messages)
         
         if st.session_state.retriever:
-            # RAG 체인 사용
             chain = rag_pipeline.create_conversational_rag_chain(
                 st.session_state.retriever, 
                 st.session_state.system_prompt
@@ -207,7 +243,6 @@ if user_input:
                 ai_answer = ""
                 source_documents = []
                 
-                # 스트리밍 응답
                 for chunk in chain.stream({
                     "input": user_input, 
                     "chat_history": chat_history
@@ -218,23 +253,19 @@ if user_input:
                     if "context" in chunk and not source_documents:
                         source_documents = chunk["context"]
                 
-                # 검색 결과 정보 표시
                 if source_documents:
-                    st.info(f"🔍 하이브리드 검색으로 {len(source_documents)}개의 관련 문서를 찾았습니다.")
+                    st.info(f"🔍 지능형 분할 검색으로 {len(source_documents)}개의 유사도 높은 청크를 찾았습니다.")
                 else:
                     st.warning("⚠️ 관련 문서를 찾지 못했지만 일반 지식으로 답변했습니다.")
                 
-                # 메시지 저장
                 st.session_state.messages.append({
                     "role": "assistant", 
                     "content": ai_answer, 
                     "sources": source_documents
                 })
                 
-                # 출처 표시
-                display_sources(source_documents)
+                display_smart_sources(source_documents)
         else:
-            # 기본 체인 사용
             chain = rag_pipeline.create_default_chain(st.session_state.system_prompt)
             
             with st.chat_message("assistant"):
@@ -256,4 +287,4 @@ if user_input:
     
     except Exception as e:
         st.chat_message("assistant").error(f"❌ 답변 생성 중 오류가 발생했습니다.\n\n오류: {e}")
-        st.session_state.messages.pop()  # 오류 발생 시 마지막 메시지 제거
+        st.session_state.messages.pop()
