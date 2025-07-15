@@ -3,10 +3,11 @@ langchain
 langchain-core
 langchain-google-genai
 langchain-community
-faiss-cpu
-requests
-python-docx
-pymupdf
 beautifulsoup4
-numpy
-pandas
+faiss-cpu
+python-dotenv
+python-docx
+docx2txt
+rank_bm25
+llama-parse
+nest-asyncio
