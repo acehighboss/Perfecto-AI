@@ -21,25 +21,26 @@ if 'documents_processed' not in st.session_state:
     st.session_state.documents_processed = False
 if 'system_prompt' not in st.session_state:
     st.session_state.system_prompt = "당신은 도움이 되는 AI 어시스턴트입니다."
+if 'rag_chain' not in st.session_state:
+    st.session_state.rag_chain = None
 
 def initialize_components():
     """컴포넌트 초기화"""
     try:
         google_api_key = st.secrets["GOOGLE_API_KEY"]
-        llama_api_key = st.secrets["LLAMA_API_KEY"]
-    except KeyError as e:
-        st.error(f"Streamlit secrets에서 {e} 키를 찾을 수 없습니다. secrets.toml 파일을 확인해주세요.")
+    except KeyError:
+        st.error("Streamlit secrets에서 GOOGLE_API_KEY를 찾을 수 없습니다. secrets.toml 파일을 확인해주세요.")
         st.stop()
     
     if st.session_state.rag_pipeline is None:
         st.session_state.rag_pipeline = RAGPipeline(google_api_key)
     
     if st.session_state.file_handler is None:
-        st.session_state.file_handler = FileHandler(llama_api_key)
+        st.session_state.file_handler = FileHandler()
 
 def main():
     st.title("🤖 RAG 챗봇")
-    st.markdown("문서를 업로드하고 질문해보세요!")
+    st.markdown("문서를 업로드하고 질문해보세요! (LangChain 기반)")
     
     # 컴포넌트 초기화
     initialize_components()
@@ -59,6 +60,9 @@ def main():
         
         if st.button("프롬프트 적용", type="primary"):
             st.session_state.system_prompt = new_system_prompt
+            # RAG 체인 재생성
+            if st.session_state.rag_pipeline and st.session_state.rag_pipeline.retriever:
+                st.session_state.rag_chain = st.session_state.rag_pipeline.create_rag_chain(new_system_prompt)
             st.success("프롬프트가 적용되었습니다!")
         
         st.divider()
@@ -86,14 +90,20 @@ def main():
         
         # 4. 분석 상태 표시
         st.subheader("📈 분석 상태")
-        doc_count = st.session_state.rag_pipeline.get_document_count() if st.session_state.rag_pipeline else 0
         
-        if doc_count > 0:
-            st.success(f"✅ 분석 완료 ({doc_count}개 청크)")
-            st.session_state.documents_processed = True
+        if st.session_state.rag_pipeline:
+            vectorstore_info = st.session_state.rag_pipeline.get_vectorstore_info()
+            doc_count = vectorstore_info.get("document_count", 0)
+            
+            if doc_count > 0:
+                st.success(f"✅ 분석 완료 ({doc_count}개 청크)")
+                st.info(f"임베딩 차원: {vectorstore_info.get('index_size', 0)}")
+                st.session_state.documents_processed = True
+            else:
+                st.info("⏳ 문서를 업로드하고 분석을 시작해주세요.")
+                st.session_state.documents_processed = False
         else:
-            st.info("⏳ 문서를 업로드하고 분석을 시작해주세요.")
-            st.session_state.documents_processed = False
+            st.info("⏳ 시스템을 초기화하고 있습니다...")
         
         st.divider()
         
@@ -110,8 +120,9 @@ def main():
             if st.button("전체 초기화", help="모든 데이터를 삭제합니다"):
                 st.session_state.messages = []
                 if st.session_state.rag_pipeline:
-                    st.session_state.rag_pipeline.clear_database()
+                    st.session_state.rag_pipeline.clear_vectorstore()
                 st.session_state.documents_processed = False
+                st.session_state.rag_chain = None
                 st.rerun()
     
     # 메인 채팅 영역
@@ -137,62 +148,100 @@ def main():
             # AI 응답 생성
             with st.chat_message("assistant"):
                 with st.spinner("답변을 생성하고 있습니다..."):
-                    # 유사 문서 검색
-                    similar_docs = st.session_state.rag_pipeline.search_similar_documents(prompt)
+                    # RAG 체인 사용 (더 효율적)
+                    if st.session_state.rag_chain:
+                        try:
+                            response = st.session_state.rag_chain.invoke(prompt)
+                        except Exception as e:
+                            st.error(f"RAG 체인 실행 중 오류: {str(e)}")
+                            response = "답변 생성 중 오류가 발생했습니다."
+                    else:
+                        # 기존 방식 사용
+                        similar_docs = st.session_state.rag_pipeline.search_similar_documents(prompt)
+                        if similar_docs:
+                            response = st.session_state.rag_pipeline.generate_answer(
+                                prompt, 
+                                similar_docs, 
+                                st.session_state.system_prompt
+                            )
+                        else:
+                            response = "죄송합니다. 업로드된 문서에서 관련 정보를 찾을 수 없습니다."
                     
+                    st.markdown(response)
+                    
+                    # 참고 문서 표시 (검색 기반)
+                    similar_docs = st.session_state.rag_pipeline.search_similar_documents(prompt)
                     if similar_docs:
-                        # 답변 생성
-                        response = st.session_state.rag_pipeline.generate_answer(
-                            prompt, 
-                            similar_docs, 
-                            st.session_state.system_prompt
-                        )
-                        st.markdown(response)
-                        
-                        # 참고 문서 표시
                         with st.expander("📚 참고한 문서들"):
                             for i, doc in enumerate(similar_docs, 1):
                                 st.markdown(f"**[출처 {i}]** {doc['source']}")
                                 st.markdown(f"```\n{doc['content'][:300]}...\n```")
-                                st.markdown(f"*유사도: {doc['similarity']:.3f}*")
+                                
+                                # 메타데이터 표시
+                                metadata = doc.get('metadata', {})
+                                if metadata:
+                                    st.markdown(f"*메타데이터: {metadata}*")
                                 st.divider()
-                    else:
-                        response = "죄송합니다. 업로드된 문서에서 관련 정보를 찾을 수 없습니다."
-                        st.markdown(response)
                 
                 # 응답을 세션에 저장
                 st.session_state.messages.append({"role": "assistant", "content": response})
 
 def process_documents(url_input, uploaded_files):
     """문서 처리 함수"""
-    with st.spinner("문서를 분석하고 있습니다..."):
-        success_count = 0
-        total_count = 0
-        
+    all_documents = []
+    success_count = 0
+    total_count = 0
+    
+    with st.spinner("문서를 처리하고 있습니다..."):
         # URL 처리
         if url_input:
             total_count += 1
-            text = st.session_state.file_handler.extract_text_from_url(url_input)
-            if text:
-                chunks = st.session_state.file_handler.chunk_text(text)
-                if st.session_state.rag_pipeline.add_documents(chunks, f"URL: {url_input}"):
-                    success_count += 1
+            st.info(f"URL 처리 중: {url_input}")
+            documents = st.session_state.file_handler.load_url(url_input)
+            if documents:
+                all_documents.extend(documents)
+                success_count += 1
+                doc_info = st.session_state.file_handler.get_document_info(documents)
+                st.success(f"URL 처리 완료: {doc_info['total_chunks']}개 청크 생성")
+            else:
+                st.error("URL에서 유효한 텍스트를 추출할 수 없습니다.")
         
         # 파일 처리
         if uploaded_files:
             for uploaded_file in uploaded_files:
                 total_count += 1
-                text = st.session_state.file_handler.process_file(uploaded_file)
-                if text:
-                    chunks = st.session_state.file_handler.chunk_text(text)
-                    if st.session_state.rag_pipeline.add_documents(chunks, f"파일: {uploaded_file.name}"):
-                        success_count += 1
-        
-        if success_count > 0:
-            st.success(f"✅ {success_count}/{total_count}개 문서가 성공적으로 처리되었습니다!")
+                st.info(f"파일 처리 중: {uploaded_file.name}")
+                documents = st.session_state.file_handler.load_file(uploaded_file)
+                if documents:
+                    all_documents.extend(documents)
+                    success_count += 1
+                    doc_info = st.session_state.file_handler.get_document_info(documents)
+                    st.success(f"파일 처리 완료: {uploaded_file.name} ({doc_info['total_chunks']}개 청크)")
+                else:
+                    st.error(f"파일 처리 실패: {uploaded_file.name}")
+    
+    # 벡터스토어 생성
+    if all_documents:
+        st.info("벡터스토어를 생성하고 있습니다...")
+        if st.session_state.rag_pipeline.create_vectorstore(all_documents):
+            # RAG 체인 생성
+            st.session_state.rag_chain = st.session_state.rag_pipeline.create_rag_chain(
+                st.session_state.system_prompt
+            )
+            
+            total_info = st.session_state.file_handler.get_document_info(all_documents)
+            st.success(f"""
+            ✅ 문서 처리 완료!
+            - 처리된 문서: {success_count}/{total_count}개
+            - 총 청크 수: {total_info['total_chunks']}개
+            - 총 문자 수: {total_info['total_characters']:,}자
+            - 출처: {', '.join(total_info['sources'])}
+            """)
             st.session_state.documents_processed = True
         else:
-            st.error("❌ 문서 처리에 실패했습니다.")
+            st.error("벡터스토어 생성에 실패했습니다.")
+    else:
+        st.error("처리할 수 있는 문서가 없습니다.")
 
 if __name__ == "__main__":
     main()
