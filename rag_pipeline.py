@@ -6,11 +6,13 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
+# MultiQueryRetriever를 추가로 import 합니다.
+from langchain.retrievers.multi_query import MultiQueryRetriever
 from file_handler import get_documents_from_files
 
 def get_retriever_from_source(source_type, source_input):
     """
-    URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여 retriever를 생성합니다.
+    URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여 MultiQueryRetriever를 생성합니다.
     """
     documents = []
     if source_type == "URL":
@@ -27,7 +29,20 @@ def get_retriever_from_source(source_type, source_input):
     
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vectorstore = FAISS.from_documents(splits, embeddings)
-    return vectorstore.as_retriever(search_kwargs={"k": 3})
+    
+    # --- 수정된 부분: MultiQueryRetriever 적용 ---
+    # 1. 기본 Retriever를 생성합니다. 검색할 문서 수를 5개로 약간 늘립니다.
+    base_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    
+    # 2. 사용자 질문을 변형할 LLM을 준비합니다.
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+    
+    # 3. MultiQueryRetriever를 생성하여 기본 Retriever와 LLM을 연결합니다.
+    multi_query_retriever = MultiQueryRetriever.from_llm(
+        retriever=base_retriever, llm=llm
+    )
+    
+    return multi_query_retriever
 
 
 def get_conversational_rag_chain(retriever, system_prompt):
