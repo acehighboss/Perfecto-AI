@@ -6,12 +6,11 @@ from rag_pipeline import get_retriever_from_source, get_conversational_rag_chain
 load_dotenv()
 
 # --- 페이지 설정 ---
-st.set_page_config(page_title="Modular RAG Chatbot", page_icon="🤖")
-st.title("🤖 모듈화된 RAG 챗봇")
+st.set_page_config(page_title="LlamaParse RAG Chatbot", page_icon="🦙")
+st.title("🦙 LlamaParse 기반 RAG 챗봇")
 st.markdown(
     """
-안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX, TXT)의 내용을 분석하고 답변합니다.
-왼쪽 사이드바에서 AI의 페르소나와 분석할 대상을 설정하고 '적용' 또는 '분석' 버튼을 눌러주세요.
+안녕하세요! 이 챗봇은 **LlamaParse**를 사용하여 PDF, DOCX 등 복잡한 문서의 **텍스트, 표, 이미지**까지 분석하고 답변합니다.
 """
 )
 
@@ -26,6 +25,7 @@ if "system_prompt" not in st.session_state:
 # --- 사이드바 UI ---
 with st.sidebar:
     st.header("⚙️ 설정")
+    st.info("LlamaParse를 사용하려면 `.env` 파일에 `LLAMA_CLOUD_API_KEY`를 설정해야 합니다.")
     st.divider()
     
     with st.form("persona_form"):
@@ -45,8 +45,7 @@ with st.sidebar:
         st.subheader("🔎 분석 대상 설정")
         url_input = st.text_input("웹사이트 URL", placeholder="https://example.com")
         uploaded_files = st.file_uploader(
-            "파일 업로드 (PDF, DOCX, TXT)",
-            type=["pdf", "docx", "txt"],
+            "파일 업로드 (PDF, DOCX 등)",
             accept_multiple_files=True
         )
 
@@ -63,13 +62,13 @@ with st.sidebar:
                 st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
 
             if source_type:
-                with st.spinner("분석 중입니다..."):
+                with st.spinner("LlamaParse로 문서를 분석 중입니다..."):
                     st.session_state.retriever = get_retriever_from_source(source_type, source_input)
                 
                 if st.session_state.retriever:
                     st.success("분석이 완료되었습니다! 이제 질문해보세요.")
                 else:
-                    st.error("분석에 실패했습니다. URL이나 파일 상태를 확인해주세요.")
+                    st.error("분석에 실패했습니다. API 키나 파일 상태를 확인해주세요.")
 
     st.divider()
     if st.button("대화 초기화"):
