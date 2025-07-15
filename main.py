@@ -55,7 +55,7 @@ def filter_relevant_sources(answer, source_documents):
         if response and response.strip().lower() != 'none':
             indices_str = response.strip().split(',')
             # 중복을 제거하고 효율적인 조회를 위해 set 사용
-            relevant_indices = {int(i.strip()) - 1 for i in indices_str}
+            relevant_indices = {int(i.strip()) - 1 for i in indices_str if i.strip().isdigit()}
             filtered_docs = [doc for i, doc in enumerate(source_documents) if i in relevant_indices]
             return filtered_docs
         else:
@@ -82,49 +82,51 @@ if "retriever" not in st.session_state:
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = "당신은 친절한 AI 어시스턴트입니다. 사용자의 질문에 항상 친절하고 상세하게 답변해주세요."
 
-# --- 사이드바 UI ---
+# --- 사이드바 UI (수정됨) ---
 with st.sidebar:
     st.header("⚙️ 설정")
     st.divider()
     
-    st.subheader("🤖 AI 페르소나 설정")
-    system_prompt_input = st.text_area(
-        "AI의 역할을 설정해주세요.",
-        value=st.session_state.system_prompt,
-        height=150,
-        key="persona_input"
-    )
-    if st.button("페르소나 적용"):
-        st.session_state.system_prompt = system_prompt_input
-        st.success("페르소나가 적용되었습니다!")
+    # 페르소나 설정을 위한 폼
+    with st.form("persona_form"):
+        st.subheader("🤖 AI 페르소나 설정")
+        system_prompt_input = st.text_area(
+            "AI의 역할을 설정해주세요.",
+            value=st.session_state.system_prompt,
+            height=150
+        )
+        if st.form_submit_button("페르소나 적용"):
+            st.session_state.system_prompt = system_prompt_input
+            st.success("페르소나가 적용되었습니다!")
 
     st.divider()
-    st.subheader("🔎 분석 대상 설정")
     
-    url_input = st.text_input("웹사이트 URL", placeholder="https://example.com")
-    
-    uploaded_files = st.file_uploader(
-        "파일 업로드 (PDF, DOCX, TXT)",
-        type=["pdf", "docx", "txt"],
-        accept_multiple_files=True
-    )
+    # 분석 대상 설정을 위한 폼
+    with st.form("source_form"):
+        st.subheader("🔎 분석 대상 설정")
+        url_input = st.text_input("웹사이트 URL", placeholder="https://example.com")
+        uploaded_files = st.file_uploader(
+            "파일 업로드 (PDF, DOCX, TXT)",
+            type=["pdf", "docx", "txt"],
+            accept_multiple_files=True
+        )
 
-    if st.button("분석 시작"):
-        source_type = None
-        source_input = None
-        if uploaded_files:
-            source_type = "Files"
-            source_input = uploaded_files
-        elif url_input:
-            source_type = "URL"
-            source_input = url_input
-        else:
-            st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
+        if st.form_submit_button("분석 시작"):
+            source_type = None
+            source_input = None
+            if uploaded_files:
+                source_type = "Files"
+                source_input = uploaded_files
+            elif url_input:
+                source_type = "URL"
+                source_input = url_input
+            else:
+                st.warning("분석할 URL을 입력하거나 파일을 업로드해주세요.")
 
-        if source_type:
-            with st.spinner("분석 중입니다..."):
-                st.session_state.retriever = get_retriever_from_source(source_type, source_input)
-            st.success("분석이 완료되었습니다! 이제 질문해보세요.")
+            if source_type:
+                with st.spinner("분석 중입니다..."):
+                    st.session_state.retriever = get_retriever_from_source(source_type, source_input)
+                st.success("분석이 완료되었습니다! 이제 질문해보세요.")
 
     st.divider()
     if st.button("대화 초기화"):
@@ -169,7 +171,7 @@ if user_input:
             
             container.markdown(ai_answer)
 
-            # 답변 생성 후, 관련성 높은 출처만 필터링 (수정된 부분)
+            # 답변 생성 후, 관련성 높은 출처만 필터링
             relevant_sources = []
             if source_documents:
                 with st.spinner("출처 확인 중..."):
