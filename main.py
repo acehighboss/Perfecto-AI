@@ -1,64 +1,19 @@
 import streamlit as st
 from dotenv import load_dotenv
 from rag_pipeline import get_retriever_from_source, get_conversational_rag_chain, get_default_chain
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 
 # API KEY 정보로드
 load_dotenv()
 
-# --- 새로운 기능: 출처 재평가 및 필터링 함수 ---
-def filter_relevant_sources(answer, source_documents):
-    """
-    LLM을 사용하여 생성된 답변과 직접적으로 관련된 소스 문서만 필터링합니다.
-    """
-    if not source_documents:
-        return []
-
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-    
-    context_str = "\n---\n".join(
-        [f"[Document {i+1}]: {doc.page_content}" for i, doc in enumerate(source_documents)]
-    )
-
-    prompt_template = """
-    You are a helpful assistant. Your task is to identify which of the provided source documents are most relevant to the given answer.
-
-    Here is the answer that was generated:
-    ---
-    {answer}
-    ---
-
-    Here are the source documents that were used as context:
-    ---
-    {context}
-    ---
-
-    Please list the numbers of the documents that directly support or contain the information presented in the answer. List the most relevant documents first. If no documents are relevant, respond with "None".
-
-    Example: 3, 1, 8
-    Relevant Document Numbers:
-    """
-    prompt = ChatPromptTemplate.from_template(prompt_template)
-    chain = prompt | llm | StrOutputParser()
-
-    try:
-        response = chain.invoke({"answer": answer, "context": context_str})
-        if response and response.strip().lower() != 'none':
-            indices_str = response.strip().split(',')
-            relevant_indices = [int(i.strip()) - 1 for i in indices_str if i.strip().isdigit()]
-            # 관련성 순서대로 정렬된 문서를 반환
-            filtered_docs = [source_documents[i] for i in relevant_indices if 0 <= i < len(source_documents)]
-            return filtered_docs
-        return []
-    except Exception as e:
-        print(f"Error during source filtering: {e}")
-        return []
-
 # --- 페이지 설정 ---
 st.set_page_config(page_title="Modular RAG Chatbot", page_icon="🤖")
 st.title("🤖 모듈화된 RAG 챗봇")
+st.markdown(
+    """
+안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX, TXT)의 내용을 분석하고 답변합니다.
+왼쪽 사이드바에서 AI의 페르소나와 분석할 대상을 설정하고 '적용' 또는 '분석' 버튼을 눌러주세요.
+"""
+)
 
 # --- 세션 상태 초기화 ---
 if "messages" not in st.session_state:
@@ -122,6 +77,7 @@ with st.sidebar:
         st.rerun()
 
 # --- 메인 채팅 화면 ---
+# 이전 대화 기록 출력
 for message in st.session_state["messages"]:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -131,6 +87,7 @@ for message in st.session_state["messages"]:
                     st.info(f"**출처 {i+1}**\n\n{source.page_content}")
                     st.divider()
 
+# 사용자의 입력
 user_input = st.chat_input("궁금한 내용을 물어보세요!")
 
 if user_input:
@@ -148,33 +105,29 @@ if user_input:
                 ai_answer = ""
                 source_documents = []
                 
-                with st.spinner("답변 생성 중..."):
-                    for chunk in chain.stream({"input": user_input}):
-                        if "answer" in chunk:
-                            ai_answer += chunk["answer"]
-                            container.markdown(ai_answer + "▌")
-                        if "context" in chunk:
-                            source_documents = chunk["context"]
+                # chain.stream을 사용하여 답변을 스트리밍으로 받아옵니다.
+                for chunk in chain.stream({"input": user_input}):
+                    if "answer" in chunk:
+                        ai_answer += chunk["answer"]
+                        container.markdown(ai_answer + "▌")
+                    if "context" in chunk:
+                        source_documents = chunk["context"]
                 
                 container.markdown(ai_answer)
                 
-                relevant_sources = []
+                # 답변과 함께 출처를 표시합니다.
                 if source_documents:
-                    with st.spinner("출처 확인 중..."):
-                        relevant_sources = filter_relevant_sources(ai_answer, source_documents)
-                
-                if relevant_sources:
                     with st.expander("참고한 출처 보기"):
-                        # 필터링된 출처를 최대 5개까지 표시
-                        for i, source in enumerate(relevant_sources[:5]):
+                        for i, source in enumerate(source_documents):
                             st.info(f"**출처 {i+1}**\n\n{source.page_content}")
                             st.divider()
                 
+                # 대화 기록에 답변과 출처를 함께 저장합니다.
                 st.session_state.messages.append(
-                    {"role": "assistant", "content": ai_answer, "sources": relevant_sources[:5]}
+                    {"role": "assistant", "content": ai_answer, "sources": source_documents}
                 )
 
-        else:
+        else: # RAG 기능이 비활성화된 경우
             chain = get_default_chain(current_system_prompt)
             
             with st.chat_message("assistant"):
@@ -189,6 +142,7 @@ if user_input:
                 {"role": "assistant", "content": ai_answer, "sources": []}
             )
     except Exception as e:
+        # 오류 발생 시, 사용자에게 명확한 에러 메시지를 표시합니다.
         with st.chat_message("assistant"):
             error_message = f"죄송합니다, 답변을 생성하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요. (오류: {e})"
             st.error(error_message)
