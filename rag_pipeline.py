@@ -41,12 +41,12 @@ def get_retriever_from_source(source_type, source_input):
 
     # 1. 키워드 기반 검색기(BM25Retriever)를 초기화합니다.
     bm25_retriever = BM25Retriever.from_documents(splits)
-    bm25_retriever.k = 7 # 후보군을 7개로 설정
+    bm25_retriever.k = 10 # 후보군을 10개로 늘려 더 넓게 탐색
 
     # 2. 의미 기반 검색기(FAISS)를 초기화합니다.
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vectorstore = FAISS.from_documents(splits, embeddings)
-    faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 7})
+    faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
 
     # 3. 두 검색기를 결합하는 앙상블 검색기를 생성합니다.
     # 이 방식은 가장 안정적이고 일관된 검색 성능을 제공합니다.
@@ -63,7 +63,7 @@ def get_conversational_rag_chain(retriever, system_prompt):
     """
     template = f"""{system_prompt}
 
-You are an AI assistant. Your task is to answer the user's request based on the provided "Context".
+You are an AI assistant. Your task is to answer the user's request based on the context provided below.
 The "Context" is a collection of text snippets from a document or a URL.
 
 **Instructions:**
