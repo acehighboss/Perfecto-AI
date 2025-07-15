@@ -1,12 +1,12 @@
 streamlit
-google-generativeai
-llama-parse
+langchain
+langchain-core
+langchain-google-genai
+langchain-community
 faiss-cpu
 requests
 python-docx
-PyPDF2
+pymupdf
 beautifulsoup4
 numpy
 pandas
-pickle-mixin
-
