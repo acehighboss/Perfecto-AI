@@ -3,7 +3,6 @@ langchain
 langchain-core
 langchain-community
 langchain-google-genai
-langchain-experimental
 langchain-text-splitters
 llama-parse
 faiss-cpu
@@ -11,4 +10,4 @@ PyPDF2
 python-docx
 bs4
 requests
-rank-bm25
+tiktoken
