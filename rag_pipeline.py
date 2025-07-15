@@ -48,22 +48,22 @@ def get_retriever_from_source(source_type, source_input):
 
     # 1. 키워드 기반 검색기 (BM25)
     bm25_retriever = BM25Retriever.from_documents(splits)
-    bm25_retriever.k = 10  # Reranker를 위해 더 많은 후보군 검색
+    bm25_retriever.k = 10
 
     # 2. 의미 기반 검색기 (FAISS)
-    # Streamlit secrets에서 "GOOGLE_API_KEY"를 읽어옵니다.
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vectorstore = FAISS.from_documents(splits, embeddings)
     faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
 
     # 3. 앙상블 검색기
     ensemble_retriever = EnsembleRetriever(
-        retrievers=[bm25_retriever, faiss_retriever], weights=[0.4, 0.6] # 의미 기반 검색에 가중치 부여
+        retrievers=[bm25_retriever, faiss_retriever], weights=[0.4, 0.6]
     )
     
     # 4. Cohere Rerank를 사용한 재정렬기 설정
-    # Streamlit secrets에서 "COHERE_API_KEY"를 읽어옵니다.
-    compressor = CohereRerank(top_n=5) # 가장 관련성 높은 5개 문서만 선택
+    # ===> 바로 이 부분에 model='rerank-multilingual-v3.0' 를 추가하여 문제를 해결합니다. <===
+    compressor = CohereRerank(model="rerank-multilingual-v3.0", top_n=5)
+    
     compression_retriever = ContextualCompressionRetriever(
         base_compressor=compressor, base_retriever=ensemble_retriever
     )
@@ -92,7 +92,6 @@ The "Context" is a collection of text snippets from a document or a URL.
 {{input}}
 """
     rag_prompt = ChatPromptTemplate.from_template(template)
-    # Streamlit secrets에서 "GOOGLE_API_KEY"를 읽어옵니다.
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.7)
     document_chain = create_stuff_documents_chain(llm, rag_prompt)
     return create_retrieval_chain(retriever, document_chain)
@@ -104,6 +103,5 @@ def get_default_chain(system_prompt):
     prompt = ChatPromptTemplate.from_messages(
         [("system", system_prompt), ("user", "{question}")]
     )
-    # Streamlit secrets에서 "GOOGLE_API_KEY"를 읽어옵니다.
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.7)
     return prompt | llm | StrOutputParser()
