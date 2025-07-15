@@ -6,13 +6,16 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-# MultiQueryRetriever를 추가로 import 합니다.
+# MultiQueryRetriever와 함께 압축 및 재평가를 위한 도구들을 import 합니다.
 from langchain.retrievers.multi_query import MultiQueryRetriever
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import LLMChainExtractor
 from file_handler import get_documents_from_files
 
 def get_retriever_from_source(source_type, source_input):
     """
-    URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여 MultiQueryRetriever를 생성합니다.
+    URL 또는 파일로부터 문서를 로드하고, 텍스트를 분할하여
+    정확도를 높인 ContextualCompressionRetriever를 생성합니다.
     """
     documents = []
     if source_type == "URL":
@@ -30,19 +33,27 @@ def get_retriever_from_source(source_type, source_input):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vectorstore = FAISS.from_documents(splits, embeddings)
     
-    # --- 수정된 부분: MultiQueryRetriever 적용 ---
-    # 1. 기본 Retriever를 생성합니다. 검색할 문서 수를 5개로 약간 늘립니다.
-    base_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    # --- 수정된 부분: ContextualCompressionRetriever 적용 ---
     
-    # 2. 사용자 질문을 변형할 LLM을 준비합니다.
+    # 1. 기본 Retriever를 생성합니다. (MultiQueryRetriever 사용)
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-    
-    # 3. MultiQueryRetriever를 생성하여 기본 Retriever와 LLM을 연결합니다.
-    multi_query_retriever = MultiQueryRetriever.from_llm(
-        retriever=base_retriever, llm=llm
+    base_retriever = MultiQueryRetriever.from_llm(
+        retriever=vectorstore.as_retriever(search_kwargs={"k": 10}), # 후보군을 10개로 늘려 더 넓게 탐색
+        llm=llm
     )
     
-    return multi_query_retriever
+    # 2. 검색된 문서를 압축(재평가)할 LLM 기반 압축기를 생성합니다.
+    # 이 압축기는 문서에서 질문과 관련된 부분만 추출하는 역할을 합니다.
+    compressor = LLMChainExtractor.from_llm(llm)
+    
+    # 3. 압축기를 사용하여 기본 Retriever를 감싸는 ContextualCompressionRetriever를 생성합니다.
+    # 이 Retriever는 1차 검색 후, 2차로 압축기가 관련성 높은 내용만 필터링합니다.
+    compression_retriever = ContextualCompressionRetriever(
+        base_compressor=compressor, 
+        base_retriever=base_retriever
+    )
+    
+    return compression_retriever
 
 
 def get_conversational_rag_chain(retriever, system_prompt):
