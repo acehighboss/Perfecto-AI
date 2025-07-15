@@ -14,8 +14,12 @@ from langchain_core.runnables import RunnableLambda
 
 from file_handler import get_documents_from_files
 
-# get_retriever_from_source 함수는 변경 없이 그대로 사용합니다.
+# ===> 이 함수를 수정합니다 <===
 def get_retriever_from_source(source_type, source_input):
+    """
+    URL 또는 파일(TXT, PDF, DOCX 등)로부터 문서를 로드하고,
+    Cohere Rerank가 적용된 ContextualCompressionRetriever를 생성합니다.
+    """
     documents = []
     if source_type == "URL":
         try:
@@ -25,10 +29,28 @@ def get_retriever_from_source(source_type, source_input):
             print(f"Error loading URL: {e}")
             return None
     elif source_type == "Files":
-        llama_documents = get_documents_from_files(source_input)
-        if not llama_documents:
-            return None
-        documents = [LangChainDocument(page_content=doc.text, metadata=doc.metadata) for doc in llama_documents]
+        # .txt 파일과 그 외 파일을 분리
+        txt_files = [f for f in source_input if f.name.endswith('.txt')]
+        other_files = [f for f in source_input if not f.name.endswith('.txt')]
+
+        # 1. .txt 파일 처리 (직접 읽기)
+        for txt_file in txt_files:
+            try:
+                content = txt_file.getvalue().decode('utf-8')
+                doc = LangChainDocument(page_content=content, metadata={"source": txt_file.name})
+                documents.append(doc)
+            except Exception as e:
+                print(f"Error reading .txt file {txt_file.name}: {e}")
+
+        # 2. 그 외 파일 처리 (LlamaParse 사용)
+        if other_files:
+            try:
+                llama_documents = get_documents_from_files(other_files)
+                if llama_documents:
+                    langchain_docs = [LangChainDocument(page_content=doc.text, metadata=doc.metadata) for doc in llama_documents]
+                    documents.extend(langchain_docs)
+            except Exception as e:
+                print(f"Error parsing files with LlamaParse: {e}")
 
     if not documents:
         return None
@@ -65,7 +87,6 @@ def get_conversational_rag_chain(retriever, system_prompt):
     """
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
 
-    # 1. 일반화된 질의 재작성 프롬프트 (Zero-shot Chain-of-Thought)
     query_rewrite_template = """You are an expert at rewriting user questions into effective search queries for a vector database.
 Your goal is to transform a user's question into a query that is rich with keywords and semantic details, based on the context of an AI industry trend report.
 The rewritten query must be in Korean.
@@ -82,19 +103,16 @@ Original question: {question}
 Rewritten Search Query:"""
     query_rewrite_prompt = ChatPromptTemplate.from_template(query_rewrite_template)
     
-    # 2. 질의 재작성 체인
     query_rewriter = query_rewrite_prompt | llm | StrOutputParser()
 
-    # 3. 질의 재작성 로직을 포함하는 '스마트 리트리버' 생성
     def rewrite_and_retrieve(query: str):
         print(f"Original Query: {query}")
         rewritten_query = query_rewriter.invoke({"question": query})
-        print(f"Rewritten Query: {rewritten_query}")  # 디버깅을 위해 재작성된 쿼리 출력
+        print(f"Rewritten Query: {rewritten_query}")
         return retriever.invoke(rewritten_query)
 
     smart_retriever = RunnableLambda(rewrite_and_retrieve)
 
-    # 4. 답변 생성을 위한 프롬프트
     rag_prompt_template = f"""{system_prompt}
 
 Answer the user's request based on the provided "Context".
@@ -107,10 +125,8 @@ Answer the user's request based on the provided "Context".
 """
     rag_prompt = ChatPromptTemplate.from_template(rag_prompt_template)
     
-    # 5. 문서를 결합하여 답변을 생성하는 체인
     document_chain = create_stuff_documents_chain(llm, rag_prompt)
     
-    # 6. 표준 create_retrieval_chain을 사용하여 최종 체인 생성
     retrieval_chain = create_retrieval_chain(smart_retriever, document_chain)
     
     return retrieval_chain
