@@ -1,6 +1,5 @@
 # main.py
 import streamlit as st
-# API 키는 Streamlit의 secrets에서 자동으로 로드됩니다. .env 파일이나 load_dotenv()는 필요 없습니다.
 from rag_pipeline import get_retriever_from_source, get_conversational_rag_chain, get_default_chain
 
 # --- 페이지 설정 ---
@@ -42,9 +41,12 @@ with st.sidebar:
     with st.form("source_form"):
         st.subheader("🔎 분석 대상 설정")
         url_input = st.text_input("웹사이트 URL", placeholder="https://example.com")
+        
+        # ===> 이 부분을 수정합니다 <===
         uploaded_files = st.file_uploader(
-            "파일 업로드 (PDF, DOCX 등)",
-            accept_multiple_files=True
+            "파일 업로드 (PDF, DOCX, TXT 등)",
+            accept_multiple_files=True,
+            type=['pdf', 'docx', 'txt']  # .txt 타입을 명시적으로 허용
         )
 
         if st.form_submit_button("분석 시작"):
@@ -52,7 +54,7 @@ with st.sidebar:
             source_input = uploaded_files or url_input
 
             if source_type:
-                with st.spinner("LlamaParse로 문서를 분석하고 Rerank 모델을 준비 중입니다..."):
+                with st.spinner("문서를 분석하고 Rerank 모델을 준비 중입니다..."):
                     st.session_state.retriever = get_retriever_from_source(source_type, source_input)
                 
                 if st.session_state.retriever:
@@ -68,19 +70,16 @@ with st.sidebar:
         st.rerun()
 
 # --- 메인 채팅 화면 ---
-# 이전 대화 기록 출력
 for message in st.session_state["messages"]:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         if "sources" in message and message["sources"]:
             with st.expander("참고한 출처 보기"):
                 for i, source in enumerate(message["sources"]):
-                    # Reranker가 추가한 관련성 점수(relevance_score)를 함께 표시
                     relevance_score = source.metadata.get('relevance_score', 'N/A')
                     st.info(f"**출처 {i+1}** (관련성: {relevance_score:.2f})\n\n{source.page_content}")
                     st.divider()
 
-# 사용자의 입력
 if user_input := st.chat_input("궁금한 내용을 물어보세요!"):
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
@@ -93,14 +92,12 @@ if user_input := st.chat_input("궁금한 내용을 물어보세요!"):
             if st.session_state.retriever:
                 chain = get_conversational_rag_chain(st.session_state.retriever, current_system_prompt)
                 
-                # Reranker 사용 시 스트리밍 대신 invoke 사용
                 response = chain.invoke({"input": user_input})
                 ai_answer = response.get("answer", "답변을 생성하지 못했습니다.")
                 source_documents = response.get("context", [])
                 
                 st.markdown(ai_answer)
                 
-                # 답변과 함께 출처를 표시
                 if source_documents:
                     with st.expander("참고한 출처 보기"):
                         for i, source in enumerate(source_documents):
@@ -112,7 +109,7 @@ if user_input := st.chat_input("궁금한 내용을 물어보세요!"):
                     {"role": "assistant", "content": ai_answer, "sources": source_documents}
                 )
 
-            else: # RAG 기능이 비활성화된 경우
+            else:
                 chain = get_default_chain(current_system_prompt)
                 ai_answer = st.write_stream(chain.stream({"question": user_input}))
                 st.session_state.messages.append(
