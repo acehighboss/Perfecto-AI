@@ -15,9 +15,9 @@ from langchain_core.retrievers import BaseRetriever
 
 class RAGPipeline:
     def __init__(self, google_api_key: str):
-        # Google AI 모델 초기화
+        # Google AI 모델 초기화 (올바른 모델명 사용)
         self.embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/embedding-004",
+            model="models/text-embedding-004",  # 수정된 모델명
             google_api_key=google_api_key
         )
         
@@ -46,36 +46,57 @@ class RAGPipeline:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            status_text.text("벡터스토어 생성 중...")
+            status_text.text("임베딩 생성 중...")
+            progress_bar.progress(0.2)
             
-            if self.vectorstore is None:
-                # 새 벡터스토어 생성
-                self.vectorstore = FAISS.from_documents(
-                    documents=documents,
-                    embedding=self.embeddings
-                )
-            else:
-                # 기존 벡터스토어에 문서 추가
-                self.vectorstore.add_documents(documents)
+            # 배치 크기 설정 (Google AI API 제한 고려)
+            batch_size = 10
+            all_embeddings = []
             
-            progress_bar.progress(0.8)
+            for i in range(0, len(documents), batch_size):
+                batch_docs = documents[i:i + batch_size]
+                progress = 0.2 + (i / len(documents)) * 0.6
+                progress_bar.progress(progress)
+                status_text.text(f"임베딩 생성 중... ({i + len(batch_docs)}/{len(documents)})")
+                
+                try:
+                    if self.vectorstore is None:
+                        # 첫 번째 배치로 벡터스토어 생성
+                        self.vectorstore = FAISS.from_documents(
+                            documents=batch_docs,
+                            embedding=self.embeddings
+                        )
+                    else:
+                        # 기존 벡터스토어에 문서 추가
+                        self.vectorstore.add_documents(batch_docs)
+                except Exception as e:
+                    st.error(f"배치 {i//batch_size + 1} 처리 중 오류: {str(e)}")
+                    continue
+            
+            progress_bar.progress(0.9)
+            status_text.text("리트리버 설정 중...")
             
             # 리트리버 설정
-            self.retriever = self.vectorstore.as_retriever(
-                search_type="similarity",
-                search_kwargs={"k": 5}
-            )
-            
-            progress_bar.progress(1.0)
-            
-            # 벡터스토어 저장
-            self.save_vectorstore()
-            
-            # 진행률 표시 제거
-            progress_bar.empty()
-            status_text.empty()
-            
-            return True
+            if self.vectorstore is not None:
+                self.retriever = self.vectorstore.as_retriever(
+                    search_type="similarity",
+                    search_kwargs={"k": 5}
+                )
+                
+                progress_bar.progress(1.0)
+                status_text.text("벡터스토어 저장 중...")
+                
+                # 벡터스토어 저장
+                self.save_vectorstore()
+                
+                # 진행률 표시 제거
+                progress_bar.empty()
+                status_text.empty()
+                
+                return True
+            else:
+                st.error("벡터스토어 생성에 실패했습니다.")
+                return False
             
         except Exception as e:
             st.error(f"벡터스토어 생성 중 오류: {str(e)}")
