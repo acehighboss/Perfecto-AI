@@ -7,7 +7,7 @@ load_dotenv()
 
 # --- 페이지 설정 ---
 st.set_page_config(page_title="Modular RAG Chatbot", page_icon="🤖")
-st.title("🤖 모듈화된 RAG 챗봇")
+st.title("🤖 RAG 챗봇")
 st.markdown(
     """
 안녕하세요! 이 챗봇은 웹사이트 URL이나 업로드된 파일(PDF, DOCX, TXT)의 내용을 분석하고 답변합니다.
