@@ -181,8 +181,8 @@ class RAGPipeline:
         retriever = vectorstore.as_retriever(
             search_type="similarity_score_threshold",
             search_kwargs={
-                "k": 12,  # 더 많은 문서 검색
-                "score_threshold": 0.1  # 낮은 임계값으로 더 많은 후보 포함
+                "k": 5,  # 더 많은 문서 검색
+                "score_threshold": 0.5  # 낮은 임계값으로 더 많은 후보 포함
             }
         )
         
