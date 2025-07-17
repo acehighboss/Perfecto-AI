@@ -1,24 +1,21 @@
-# rag_pipeline.py
+# rag_pipeline.py - 버전 1 수정: BM25 + Cohere Rerank
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import WebBaseLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.retrievers import BM25Retriever, EnsembleRetriever, ContextualCompressionRetriever
+from langchain.retrievers import BM25Retriever, ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import CohereRerank
 from langchain_core.documents import Document as LangChainDocument
-from langchain_core.runnables import RunnableLambda
 
 from file_handler import get_documents_from_files
 
-# ===> 이 함수를 수정합니다 <===
 def get_retriever_from_source(source_type, source_input):
     """
-    URL 또는 파일(TXT, PDF, DOCX 등)로부터 문서를 로드하고,
-    Cohere Rerank가 적용된 ContextualCompressionRetriever를 생성합니다.
+    BM25로 후보군을 찾고 Cohere Rerank로 재정렬하는 Retriever를 생성합니다.
     """
     documents = []
     if source_type == "URL":
@@ -29,28 +26,17 @@ def get_retriever_from_source(source_type, source_input):
             print(f"Error loading URL: {e}")
             return None
     elif source_type == "Files":
-        # .txt 파일과 그 외 파일을 분리
         txt_files = [f for f in source_input if f.name.endswith('.txt')]
         other_files = [f for f in source_input if not f.name.endswith('.txt')]
 
-        # 1. .txt 파일 처리 (직접 읽기)
         for txt_file in txt_files:
-            try:
-                content = txt_file.getvalue().decode('utf-8')
-                doc = LangChainDocument(page_content=content, metadata={"source": txt_file.name})
-                documents.append(doc)
-            except Exception as e:
-                print(f"Error reading .txt file {txt_file.name}: {e}")
+            content = txt_file.getvalue().decode('utf-8')
+            documents.append(LangChainDocument(page_content=content, metadata={"source": txt_file.name}))
 
-        # 2. 그 외 파일 처리 (LlamaParse 사용)
         if other_files:
-            try:
-                llama_documents = get_documents_from_files(other_files)
-                if llama_documents:
-                    langchain_docs = [LangChainDocument(page_content=doc.text, metadata=doc.metadata) for doc in llama_documents]
-                    documents.extend(langchain_docs)
-            except Exception as e:
-                print(f"Error parsing files with LlamaParse: {e}")
+            llama_documents = get_documents_from_files(other_files)
+            if llama_documents:
+                documents.extend([LangChainDocument(page_content=doc.text, metadata=doc.metadata) for doc in llama_documents])
 
     if not documents:
         return None
@@ -60,21 +46,17 @@ def get_retriever_from_source(source_type, source_input):
     if not splits:
         return None
 
+    # --- 핵심 변경 부분 ---
+    # 1. 1차 후보군을 넓게 찾기 위해 BM25 Retriever를 생성하고 k값을 20으로 설정합니다.
     bm25_retriever = BM25Retriever.from_documents(splits)
-    bm25_retriever.k = 10
-
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    vectorstore = FAISS.from_documents(splits, embeddings)
-    faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
-
-    ensemble_retriever = EnsembleRetriever(
-        retrievers=[bm25_retriever, faiss_retriever], weights=[0.4, 0.6]
-    )
+    bm25_retriever.k = 20
     
+    # 2. Cohere Rerank 압축기를 생성합니다. 최종 5개를 선택합니다.
     compressor = CohereRerank(model="rerank-multilingual-v3.0", top_n=5)
     
+    # 3. BM25 Retriever와 Rerank 압축기를 결합하여 최종 Retriever를 생성합니다.
     compression_retriever = ContextualCompressionRetriever(
-        base_compressor=compressor, base_retriever=ensemble_retriever
+        base_compressor=compressor, base_retriever=bm25_retriever
     )
     
     return compression_retriever
@@ -82,36 +64,9 @@ def get_retriever_from_source(source_type, source_input):
 
 def get_conversational_rag_chain(retriever, system_prompt):
     """
-    '역할 부여 및 사고 과정(Chain-of-Thought)' 프롬프트를 사용하여
-    질의 재작성 기능이 포함된 RAG 체인을 생성합니다.
+    (모든 버전에서 동일) 전달받은 Retriever와 LLM을 연결하여 RAG 체인을 생성합니다.
     """
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-
-    query_rewrite_template = """You are an expert at rewriting user questions into effective search queries for a vector database.
-Your goal is to transform a user's question into a query that is rich with keywords and semantic details, based on the context of an AI industry trend report.
-The rewritten query must be in Korean.
-
-Follow these steps:
-1.  **Analyze Intent**: Understand the core information the user is seeking.
-2.  **Identify Key Concepts**: Extract main topics and entities (e.g., companies, technologies, people, countries).
-3.  **Expand and Specify**: Brainstorm related, more specific terms.
-    - If the user asks about a country's AI (e.g., "AI from China"), expand to major tech companies from that country (e.g., "Alibaba", "Tencent", "Baidu") and specific technologies (e.g., "LLM", "Tongyi Qianwen").
-    - If the user asks about a concept (e.g., "AI safety"), expand to related terms (e.g., "AI alignment", "red-teaming", "AI ethics").
-4.  **Construct a Descriptive Query**: Combine the original and expanded concepts into a single, comprehensive search query.
-
-Original question: {question}
-Rewritten Search Query:"""
-    query_rewrite_prompt = ChatPromptTemplate.from_template(query_rewrite_template)
-    
-    query_rewriter = query_rewrite_prompt | llm | StrOutputParser()
-
-    def rewrite_and_retrieve(query: str):
-        print(f"Original Query: {query}")
-        rewritten_query = query_rewriter.invoke({"question": query})
-        print(f"Rewritten Query: {rewritten_query}")
-        return retriever.invoke(rewritten_query)
-
-    smart_retriever = RunnableLambda(rewrite_and_retrieve)
 
     rag_prompt_template = f"""{system_prompt}
 
@@ -127,12 +82,13 @@ Answer the user's request based on the provided "Context".
     
     document_chain = create_stuff_documents_chain(llm, rag_prompt)
     
-    retrieval_chain = create_retrieval_chain(smart_retriever, document_chain)
-    
-    return retrieval_chain
+    return create_retrieval_chain(retriever, document_chain)
 
 
 def get_default_chain(system_prompt):
+    """
+    (모든 버전에서 동일) 문서가 없을 때 사용되는 기본 대화 체인입니다.
+    """
     prompt = ChatPromptTemplate.from_messages(
         [("system", system_prompt), ("user", "{question}")]
     )
