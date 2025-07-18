@@ -1,6 +1,7 @@
 import nest_asyncio
 nest_asyncio.apply()
 
+import bs4 # bs4 import 추가
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
@@ -15,7 +16,7 @@ from langchain_core.runnables import RunnableLambda
 from langchain_experimental.text_splitter import SemanticChunker
 
 from file_handler import get_documents_from_files
-from bs4 import SoupStrainer
+# SoupStrainer는 더 이상 사용하지 않으므로 import를 제거해도 됩니다.
 
 
 def get_retriever_from_source(source_type, source_input):
@@ -26,20 +27,39 @@ def get_retriever_from_source(source_type, source_input):
     documents = []
     if source_type == "URL":
         try:
-            strainer = SoupStrainer(
-                "main",
-                class_=("post-content", "entry-content", "mw-parser-output"),
-                id=("main-content", "content")
-            )
-            loader = WebBaseLoader(
-                web_path=source_input,
-                bs_kwargs={"parse_only": strainer}
-            )
-            loaded_docs = loader.load()
-            
-            # ▼▼▼ [수정] 내용이 없거나 공백뿐인 문서를 필터링하여 제거 ▼▼▼
-            documents = [doc for doc in loaded_docs if doc.page_content.strip()]
+            # ▼▼▼ [수정] 웹 페이지 본문을 지능적으로 탐색하고 정제하는 로직으로 변경 ▼▼▼
+            loader = WebBaseLoader(web_path=source_input)
+            raw_docs = loader.load()
 
+            cleaned_documents = []
+            for doc in raw_docs:
+                soup = bs4.BeautifulSoup(doc.page_content, "lxml")
+                content_container = None
+                
+                # 일반적인 본문 컨테이너를 우선순위에 따라 탐색
+                if soup.find("article"):
+                    content_container = soup.find("article")
+                elif soup.find("main"):
+                    content_container = soup.find("main")
+                elif soup.find("div", class_="mw-parser-output"): # 위키피디아 대응
+                    content_container = soup.find("div", class_="mw-parser-output")
+                elif soup.find("div", id="content"):
+                    content_container = soup.find("div", id="content")
+                elif soup.find("div", class_="post-content"): # 블로그 대응
+                    content_container = soup.find("div", class_="post-content")
+                
+                # 적절한 컨테이너를 찾으면 해당 부분의 텍스트를, 못찾으면 body 전체 텍스트를 사용
+                if content_container:
+                    cleaned_text = content_container.get_text(separator="\n", strip=True)
+                else:
+                    cleaned_text = soup.body.get_text(separator="\n", strip=True) if soup.body else ""
+
+                if cleaned_text:
+                    cleaned_doc = LangChainDocument(page_content=cleaned_text, metadata=doc.metadata)
+                    cleaned_documents.append(cleaned_doc)
+            
+            documents = cleaned_documents
+            # ▲▲▲ [수정] 여기까지 ▲▲▲
         except Exception as e:
             print(f"Error loading URL: {e}")
             return None
@@ -65,7 +85,6 @@ def get_retriever_from_source(source_type, source_input):
                 print(f"Error parsing files with LlamaParse: {e}")
 
     if not documents:
-        # 이 부분은 문서 로드 또는 필터링 후 내용이 없을 때를 대비한 방어 코드입니다.
         print("Warning: No processable documents found.")
         return None
 
@@ -74,7 +93,7 @@ def get_retriever_from_source(source_type, source_input):
         embeddings,
         breakpoint_threshold_type="percentile",
         breakpoint_threshold_amount=95,
-        buffer_sze=1,
+        buffer_size=1,
         min_chunk_size=100
     )
     splits = text_splitter.split_documents(documents)
