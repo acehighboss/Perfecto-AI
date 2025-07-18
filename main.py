@@ -1,6 +1,9 @@
-# main.py
+import nest_asyncio
+nest_asyncio.apply()
+
 import streamlit as st
 from rag_pipeline import get_retriever_from_source, get_conversational_rag_chain, get_default_chain
+import hashlib
 
 # --- 페이지 설정 ---
 st.set_page_config(page_title="LlamaParse RAG Chatbot", page_icon="🦙")
