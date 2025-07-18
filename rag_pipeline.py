@@ -1,9 +1,11 @@
 import nest_asyncio
 nest_asyncio.apply()
 
+import bs4
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
+from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -12,7 +14,7 @@ from langchain.retrievers.document_compressors import CohereRerank
 from langchain_core.documents import Document as LangChainDocument
 from langchain_core.runnables import RunnableLambda
 from langchain_experimental.text_splitter import SemanticChunker
-from newspaper import Article # <-- newspaper3k 라이브러리 import
+from newspaper import Article
 
 from file_handler import get_documents_from_files
 
@@ -25,18 +27,42 @@ def get_retriever_from_source(source_type, source_input):
     documents = []
     if source_type == "URL":
         try:
-            # ▼▼▼ [수정] newspaper3k를 사용하여 웹사이트 본문을 추출하는 로직으로 변경 ▼▼▼
-            article = Article(url=source_input, language='ko')
-            article.download()
-            article.parse()
-            
-            cleaned_text = article.text
-            if cleaned_text:
-                metadata = {"source": source_input}
-                documents = [LangChainDocument(page_content=cleaned_text, metadata=metadata)]
+            # ▼▼▼ [수정] 위키피디아와 일반 사이트를 구분하여 처리하는 하이브리드 로직 ▼▼▼
+            if "wikipedia.org" in source_input:
+                # --- 위키피디아 전용 정제 로직 (BeautifulSoup) ---
+                loader = WebBaseLoader(web_path=source_input)
+                raw_docs = loader.load()
+
+                for doc in raw_docs:
+                    soup = bs4.BeautifulSoup(doc.page_content, "lxml")
+                    content_container = soup.find("div", class_="mw-parser-output")
+                    if not content_container: continue
+
+                    unwanted_selectors = [
+                        "div.reflist", "ol.references", "div.navbox", "table.navbox",
+                        "div.hatnote", "div.rellink", "span.mw-editsection",
+                        "div#toc", "div#catlinks"
+                    ]
+                    for selector in unwanted_selectors:
+                        for element in content_container.select(selector):
+                            element.decompose()
+                    
+                    cleaned_text = content_container.get_text(separator="\n", strip=True)
+                    if cleaned_text:
+                        documents.append(LangChainDocument(page_content=cleaned_text, metadata=doc.metadata))
+            else:
+                # --- 일반 사이트용 정제 로직 (newspaper3k) ---
+                article = Article(url=source_input, language='ko')
+                article.download()
+                article.parse()
+                
+                cleaned_text = article.text
+                if cleaned_text:
+                    metadata = {"source": source_input}
+                    documents = [LangChainDocument(page_content=cleaned_text, metadata=metadata)]
             # ▲▲▲ [수정] 여기까지 ▲▲▲
         except Exception as e:
-            print(f"Error loading URL with newspaper3k: {e}")
+            print(f"Error processing URL {source_input}: {e}")
             return None
     elif source_type == "Files":
         txt_files = [f for f in source_input if f.name.endswith('.txt')]
