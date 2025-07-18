@@ -15,7 +15,7 @@ from langchain_core.runnables import RunnableLambda
 from langchain_experimental.text_splitter import SemanticChunker
 
 from file_handler import get_documents_from_files
-from bs4 import SoupStrainer  #<-- bs4.SoupStrainer import 추가
+from bs4 import SoupStrainer
 
 
 def get_retriever_from_source(source_type, source_input):
@@ -26,9 +26,7 @@ def get_retriever_from_source(source_type, source_input):
     documents = []
     if source_type == "URL":
         try:
-            # ▼▼▼ [수정] 웹 페이지의 본문 내용만 추출하도록 SoupStrainer 설정 ▼▼▼
             strainer = SoupStrainer(
-                # 위키백과, 블로그 등 대부분의 웹사이트 본문이 포함된 태그를 타겟
                 "main",
                 class_=("post-content", "entry-content", "mw-parser-output"),
                 id=("main-content", "content")
@@ -37,8 +35,11 @@ def get_retriever_from_source(source_type, source_input):
                 web_path=source_input,
                 bs_kwargs={"parse_only": strainer}
             )
-            documents = loader.load()
-            # ▲▲▲ [수정] 여기까지 ▲▲▲
+            loaded_docs = loader.load()
+            
+            # ▼▼▼ [수정] 내용이 없거나 공백뿐인 문서를 필터링하여 제거 ▼▼▼
+            documents = [doc for doc in loaded_docs if doc.page_content.strip()]
+
         except Exception as e:
             print(f"Error loading URL: {e}")
             return None
@@ -64,6 +65,8 @@ def get_retriever_from_source(source_type, source_input):
                 print(f"Error parsing files with LlamaParse: {e}")
 
     if not documents:
+        # 이 부분은 문서 로드 또는 필터링 후 내용이 없을 때를 대비한 방어 코드입니다.
+        print("Warning: No processable documents found.")
         return None
 
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
@@ -71,7 +74,7 @@ def get_retriever_from_source(source_type, source_input):
         embeddings,
         breakpoint_threshold_type="percentile",
         breakpoint_threshold_amount=95,
-        buffer_size=1,
+        buffer_sze=1,
         min_chunk_size=100
     )
     splits = text_splitter.split_documents(documents)
