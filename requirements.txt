@@ -4,6 +4,7 @@ langchain
 langchain-core
 langchain-google-genai
 langchain-community
+langchain-experimental
 beautifulsoup4
 faiss-cpu
 python-dotenv
