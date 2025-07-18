@@ -13,4 +13,5 @@ docx2txt
 rank_bm25
 llama-parse
 nest-asyncio
-cohere  # <--- 추가
+cohere
+lxml
