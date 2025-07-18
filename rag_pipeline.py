@@ -1,11 +1,9 @@
 import nest_asyncio
 nest_asyncio.apply()
 
-import bs4 # bs4 import 추가
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
-from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -14,9 +12,9 @@ from langchain.retrievers.document_compressors import CohereRerank
 from langchain_core.documents import Document as LangChainDocument
 from langchain_core.runnables import RunnableLambda
 from langchain_experimental.text_splitter import SemanticChunker
+from newspaper import Article # <-- newspaper3k 라이브러리 import
 
 from file_handler import get_documents_from_files
-# SoupStrainer는 더 이상 사용하지 않으므로 import를 제거해도 됩니다.
 
 
 def get_retriever_from_source(source_type, source_input):
@@ -27,41 +25,18 @@ def get_retriever_from_source(source_type, source_input):
     documents = []
     if source_type == "URL":
         try:
-            # ▼▼▼ [수정] 웹 페이지 본문을 지능적으로 탐색하고 정제하는 로직으로 변경 ▼▼▼
-            loader = WebBaseLoader(web_path=source_input)
-            raw_docs = loader.load()
-
-            cleaned_documents = []
-            for doc in raw_docs:
-                soup = bs4.BeautifulSoup(doc.page_content, "lxml")
-                content_container = None
-                
-                # 일반적인 본문 컨테이너를 우선순위에 따라 탐색
-                if soup.find("article"):
-                    content_container = soup.find("article")
-                elif soup.find("main"):
-                    content_container = soup.find("main")
-                elif soup.find("div", class_="mw-parser-output"): # 위키피디아 대응
-                    content_container = soup.find("div", class_="mw-parser-output")
-                elif soup.find("div", id="content"):
-                    content_container = soup.find("div", id="content")
-                elif soup.find("div", class_="post-content"): # 블로그 대응
-                    content_container = soup.find("div", class_="post-content")
-                
-                # 적절한 컨테이너를 찾으면 해당 부분의 텍스트를, 못찾으면 body 전체 텍스트를 사용
-                if content_container:
-                    cleaned_text = content_container.get_text(separator="\n", strip=True)
-                else:
-                    cleaned_text = soup.body.get_text(separator="\n", strip=True) if soup.body else ""
-
-                if cleaned_text:
-                    cleaned_doc = LangChainDocument(page_content=cleaned_text, metadata=doc.metadata)
-                    cleaned_documents.append(cleaned_doc)
+            # ▼▼▼ [수정] newspaper3k를 사용하여 웹사이트 본문을 추출하는 로직으로 변경 ▼▼▼
+            article = Article(url=source_input, language='ko')
+            article.download()
+            article.parse()
             
-            documents = cleaned_documents
+            cleaned_text = article.text
+            if cleaned_text:
+                metadata = {"source": source_input}
+                documents = [LangChainDocument(page_content=cleaned_text, metadata=metadata)]
             # ▲▲▲ [수정] 여기까지 ▲▲▲
         except Exception as e:
-            print(f"Error loading URL: {e}")
+            print(f"Error loading URL with newspaper3k: {e}")
             return None
     elif source_type == "Files":
         txt_files = [f for f in source_input if f.name.endswith('.txt')]
