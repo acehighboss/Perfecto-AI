@@ -13,6 +13,7 @@ from langchain.retrievers import BM25Retriever, EnsembleRetriever, ContextualCom
 from langchain.retrievers.document_compressors import CohereRerank
 from langchain_core.documents import Document as LangChainDocument
 from langchain_core.runnables import RunnableLambda
+from langchain_experimental.text_splitter import SemanticChunker
 
 from file_handler import get_documents_from_files
 
@@ -57,8 +58,10 @@ def get_retriever_from_source(source_type, source_input):
     if not documents:
         return None
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=200)
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    text_splitter = SemanticChunker(embeddings)
     splits = text_splitter.split_documents(documents)
+    
     if not splits:
         return None
 
