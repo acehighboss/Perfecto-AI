@@ -5,7 +5,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import WebBaseLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -16,8 +15,9 @@ from langchain_core.runnables import RunnableLambda
 from langchain_experimental.text_splitter import SemanticChunker
 
 from file_handler import get_documents_from_files
+from bs4 import SoupStrainer  #<-- bs4.SoupStrainer import 추가
 
-# ===> 이 함수를 수정합니다 <===
+
 def get_retriever_from_source(source_type, source_input):
     """
     URL 또는 파일(TXT, PDF, DOCX 등)로부터 문서를 로드하고,
@@ -26,17 +26,26 @@ def get_retriever_from_source(source_type, source_input):
     documents = []
     if source_type == "URL":
         try:
-            loader = WebBaseLoader(source_input)
+            # ▼▼▼ [수정] 웹 페이지의 본문 내용만 추출하도록 SoupStrainer 설정 ▼▼▼
+            strainer = SoupStrainer(
+                # 위키백과, 블로그 등 대부분의 웹사이트 본문이 포함된 태그를 타겟
+                "main",
+                class_=("post-content", "entry-content", "mw-parser-output"),
+                id=("main-content", "content")
+            )
+            loader = WebBaseLoader(
+                web_path=source_input,
+                bs_kwargs={"parse_only": strainer}
+            )
             documents = loader.load()
+            # ▲▲▲ [수정] 여기까지 ▲▲▲
         except Exception as e:
             print(f"Error loading URL: {e}")
             return None
     elif source_type == "Files":
-        # .txt 파일과 그 외 파일을 분리
         txt_files = [f for f in source_input if f.name.endswith('.txt')]
         other_files = [f for f in source_input if not f.name.endswith('.txt')]
 
-        # 1. .txt 파일 처리 (직접 읽기)
         for txt_file in txt_files:
             try:
                 content = txt_file.getvalue().decode('utf-8')
@@ -45,7 +54,6 @@ def get_retriever_from_source(source_type, source_input):
             except Exception as e:
                 print(f"Error reading .txt file {txt_file.name}: {e}")
 
-        # 2. 그 외 파일 처리 (LlamaParse 사용)
         if other_files:
             try:
                 llama_documents = get_documents_from_files(other_files)
@@ -59,7 +67,13 @@ def get_retriever_from_source(source_type, source_input):
         return None
 
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    text_splitter = SemanticChunker(embeddings)
+    text_splitter = SemanticChunker(
+        embeddings,
+        breakpoint_threshold_type="percentile",
+        breakpoint_threshold_amount=95,
+        buffer_size=1,
+        min_chunk_size=100
+    )
     splits = text_splitter.split_documents(documents)
     
     if not splits:
@@ -68,7 +82,6 @@ def get_retriever_from_source(source_type, source_input):
     bm25_retriever = BM25Retriever.from_documents(splits)
     bm25_retriever.k = 10
 
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vectorstore = FAISS.from_documents(splits, embeddings)
     faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
 
