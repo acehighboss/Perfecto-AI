@@ -2,6 +2,7 @@ import nest_asyncio
 nest_asyncio.apply()
 
 import bs4
+import asyncio
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
@@ -18,10 +19,9 @@ from newspaper import Article
 
 from file_handler import get_documents_from_files
 
-
-def get_retriever_from_source(source_type, source_input):
+async def get_retriever_from_source_async(source_type, source_input):
     """
-    URL 또는 파일(TXT, PDF, DOCX 등)로부터 문서를 로드하고,
+    URL 또는 파일로부터 문서를 로드하고,
     Cohere Rerank가 적용된 ContextualCompressionRetriever를 생성합니다.
     """
     documents = []
@@ -31,7 +31,7 @@ def get_retriever_from_source(source_type, source_input):
             if "wikipedia.org" in source_input:
                 # --- 위키피디아 전용 정제 로직 (BeautifulSoup) ---
                 loader = WebBaseLoader(web_path=source_input)
-                raw_docs = loader.load()
+                raw_docs = await loader.aload() # aload()로 비동기 호출출
 
                 for doc in raw_docs:
                     soup = bs4.BeautifulSoup(doc.page_content, "lxml")
@@ -52,9 +52,10 @@ def get_retriever_from_source(source_type, source_input):
                         documents.append(LangChainDocument(page_content=cleaned_text, metadata=doc.metadata))
             else:
                 # --- 일반 사이트용 정제 로직 (newspaper3k) ---
-                article = Article(url=source_input, language='ko')
-                article.download()
-                article.parse()
+                loop = asyncio.get_running_loop()
+                article = await loop.run_in_executor(None, lambda: Article(url=source_input, language='ko'))
+                await loop.run_in_executor(None, article.download)
+                await loop.run_in_executor(None, article.parse)
                 
                 cleaned_text = article.text
                 if cleaned_text:
@@ -78,7 +79,7 @@ def get_retriever_from_source(source_type, source_input):
 
         if other_files:
             try:
-                llama_documents = get_documents_from_files(other_files)
+                llama_documents = await get_documents_from_files(other_files)
                 if llama_documents:
                     langchain_docs = [LangChainDocument(page_content=doc.text, metadata=doc.metadata) for doc in llama_documents]
                     documents.extend(langchain_docs)
@@ -105,21 +106,37 @@ def get_retriever_from_source(source_type, source_input):
     bm25_retriever = BM25Retriever.from_documents(splits)
     bm25_retriever.k = 10
 
-    vectorstore = FAISS.from_documents(splits, embeddings)
+    # --- 임베딩 병목 해결을 위한 핵심 비동기 로직 ---
+    texts_for_embedding = [doc.page_content for doc in splits]
+    # aembed_documents를 사용하여 모든 텍스트 청크에 대한 임베딩을 동시에 요청
+    embedded_vectors = await embeddings.aembed_documents(texts_for_embedding)
+    
+    # 미리 계산된 임베딩을 사용하여 FAISS 인덱스를 생성 (네트워크 통신 없음)
+    text_embedding_pairs = zip(texts_for_embedding, embedded_vectors)
+    vectorstore = FAISS.from_embeddings(text_embeddings=list(text_embedding_pairs), embedding=embeddings, metadatas=[doc.metadata for doc in splits])
     faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
 
     ensemble_retriever = EnsembleRetriever(
         retrievers=[bm25_retriever, faiss_retriever], weights=[0.4, 0.6]
     )
-    
     compressor = CohereRerank(model="rerank-multilingual-v3.0", top_n=5)
-    
     compression_retriever = ContextualCompressionRetriever(
         base_compressor=compressor, base_retriever=ensemble_retriever
     )
     
     return compression_retriever
 
+# ▼▼▼ [수정] 기존 동기 함수는 비동기 함수를 실행하는 래퍼(Wrapper) 역할만 수행 ▼▼▼
+def get_retriever_from_source(source_type, source_input):
+    """
+    비동기 함수인 get_retriever_from_source_async를 실행하고 결과를 반환합니다.
+    Streamlit과 같은 동기 환경과의 호환성을 위해 사용됩니다.
+    """
+    try:
+        return asyncio.run(get_retriever_from_source_async(source_type, source_input))
+    except Exception as e:
+        print(f"Error running async retriever creation: {e}")
+        return None
 
 def get_conversational_rag_chain(retriever, system_prompt):
     """
