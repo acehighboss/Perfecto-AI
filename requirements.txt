@@ -15,3 +15,5 @@ llama-parse
 nest-asyncio
 cohere
 lxml
+newspaper3k
+nltk
